@@ -17,11 +17,12 @@ type Props = {
   open: boolean;
   goal?: Goal | null;
   isSaving?: boolean;
+  lockSharedFields?: boolean;
   onOpenChange: (open: boolean) => void;
   onSubmit: (values: GoalFormValues) => Promise<boolean> | boolean;
 };
 
-export function GoalFormDialog({ open, goal, isSaving = false, onOpenChange, onSubmit }: Props) {
+export function GoalFormDialog({ open, goal, isSaving = false, lockSharedFields = false, onOpenChange, onSubmit }: Props) {
   const form = useForm<GoalFormValues>({
     resolver: zodResolver(goalFormSchema),
     defaultValues: emptyGoalForm()
@@ -50,7 +51,11 @@ export function GoalFormDialog({ open, goal, isSaving = false, onOpenChange, onS
       <DialogContent>
         <DialogHeader>
           <DialogTitle>{goal ? "Edit goal" : "Create goal"}</DialogTitle>
-          <DialogDescription>Define measurable work outcomes before submitting them for approval.</DialogDescription>
+          <DialogDescription>
+            {lockSharedFields
+              ? "This shared goal was pushed by your manager. You can adjust weightage only."
+              : "Define measurable work outcomes before submitting them for approval."}
+          </DialogDescription>
         </DialogHeader>
 
         <form
@@ -63,13 +68,13 @@ export function GoalFormDialog({ open, goal, isSaving = false, onOpenChange, onS
           })}
         >
           <Field label="Thrust Area" error={form.formState.errors.thrustArea?.message}>
-            <Input {...form.register("thrustArea")} placeholder="Operational Excellence" />
+            <Input {...form.register("thrustArea")} placeholder="Operational Excellence" disabled={isSaving || lockSharedFields} />
           </Field>
           <Field label="Goal Title" error={form.formState.errors.title?.message}>
-            <Input {...form.register("title")} placeholder="Reduce cycle time" />
+            <Input {...form.register("title")} placeholder="Reduce cycle time" disabled={isSaving || lockSharedFields} />
           </Field>
           <Field label="Description" error={form.formState.errors.description?.message}>
-            <Textarea {...form.register("description")} placeholder="Describe the intended business outcome." />
+            <Textarea {...form.register("description")} placeholder="Describe the intended business outcome." disabled={isSaving || lockSharedFields} />
           </Field>
 
           <div className="grid gap-4 sm:grid-cols-2">
@@ -78,7 +83,7 @@ export function GoalFormDialog({ open, goal, isSaving = false, onOpenChange, onS
                 control={form.control}
                 name="uom"
                 render={({ field }) => (
-                  <Select value={field.value} onValueChange={field.onChange} disabled={isSaving}>
+                  <Select value={field.value} onValueChange={field.onChange} disabled={isSaving || lockSharedFields}>
                     <SelectTrigger><SelectValue /></SelectTrigger>
                     <SelectContent>
                       <SelectItem value="numeric">Numeric</SelectItem>
@@ -95,7 +100,7 @@ export function GoalFormDialog({ open, goal, isSaving = false, onOpenChange, onS
                 control={form.control}
                 name="goalType"
                 render={({ field }) => (
-                  <Select value={field.value} onValueChange={field.onChange} disabled={isSaving}>
+                  <Select value={field.value} onValueChange={field.onChange} disabled={isSaving || lockSharedFields}>
                     <SelectTrigger><SelectValue /></SelectTrigger>
                     <SelectContent>
                       <SelectItem value="max">Max</SelectItem>
@@ -109,7 +114,7 @@ export function GoalFormDialog({ open, goal, isSaving = false, onOpenChange, onS
 
           <div className="grid gap-4 sm:grid-cols-2">
             <Field label="Target" error={form.formState.errors.target?.message}>
-              <Input {...form.register("target")} placeholder="95%" disabled={isSaving} />
+              <Input {...form.register("target")} placeholder="95%" disabled={isSaving || lockSharedFields} />
             </Field>
             <Field label="Weightage" error={form.formState.errors.weightage?.message}>
               <Input type="number" min={10} max={100} disabled={isSaving} {...form.register("weightage", { valueAsNumber: true })} />

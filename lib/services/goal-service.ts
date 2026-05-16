@@ -7,6 +7,8 @@ import type { AchievementFormValues, AchievementUpdate, Goal, GoalFormValues, Ma
 const GOALS_KEY = "goal_portal_goals";
 const REVIEWS_KEY = "goal_portal_reviews";
 const ACHIEVEMENTS_KEY = "goal_portal_achievements";
+const DATA_VERSION_KEY = "goal_portal_data_version";
+const DATA_VERSION = "2026-05-16-demo-v2";
 
 function now() {
   return new Date().toISOString();
@@ -14,6 +16,7 @@ function now() {
 
 function readJson<T>(key: string, fallback: T): T {
   if (typeof window === "undefined") return fallback;
+  ensureDemoDataVersion();
   try {
     const raw = window.localStorage.getItem(key);
     if (!raw) {
@@ -25,6 +28,16 @@ function readJson<T>(key: string, fallback: T): T {
     safeSetJson(key, fallback);
     return fallback;
   }
+}
+
+function ensureDemoDataVersion() {
+  const currentVersion = window.localStorage.getItem(DATA_VERSION_KEY);
+  if (currentVersion === DATA_VERSION) return;
+
+  safeSetJson(GOALS_KEY, seedGoals);
+  safeSetJson(REVIEWS_KEY, seedReviews);
+  safeSetJson(ACHIEVEMENTS_KEY, seedAchievements);
+  window.localStorage.setItem(DATA_VERSION_KEY, DATA_VERSION);
 }
 
 function safeSetJson<T>(key: string, value: T) {
@@ -44,6 +57,7 @@ export function resetWorkspaceData() {
   safeSetJson(GOALS_KEY, seedGoals);
   safeSetJson(REVIEWS_KEY, seedReviews);
   safeSetJson(ACHIEVEMENTS_KEY, seedAchievements);
+  window.localStorage.setItem(DATA_VERSION_KEY, DATA_VERSION);
 }
 
 export function loadGoals(): Goal[] {

@@ -2,21 +2,22 @@
 
 import {
   AlertCircle,
-  BarChart3,
   CheckCircle2,
   ClipboardList,
-  FileLock2,
   LayoutDashboard,
   Loader2,
   LogOut,
+  Menu,
   Plus,
   ShieldCheck,
-  Users
+  Users,
+  X
 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { GoalFormDialog } from "@/components/goals/goal-form-dialog";
 import { logoutAction } from "@/app/login/actions";
 import { AchievementTracking } from "@/components/dashboard/achievement-tracking";
+import { VisualDashboard } from "@/components/dashboard/visual-dashboard";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -46,6 +47,7 @@ import {
   deleteSupabaseGoal,
   insertSupabaseGoal,
   loadSupabaseWorkspace,
+  pushSupabaseSharedGoal,
   submitSupabaseGoals,
   unlockSupabaseGoal,
   upsertSupabaseAchievement,
@@ -76,6 +78,7 @@ type GoalPortalProps = {
 
 export function GoalPortal({ initialRole = "employee", profile }: GoalPortalProps) {
   const [role] = useState<Role>(initialRole);
+  const [sidebarOpen, setSidebarOpen] = useState(false);
   const [users, setUsers] = useState<User[]>(seedUsers);
   const [goals, setGoals] = useState<Goal[]>([]);
   const [reviews, setReviews] = useState<ManagerReview[]>([]);
@@ -131,7 +134,6 @@ export function GoalPortal({ initialRole = "employee", profile }: GoalPortalProp
     role === "employee" ? currentUser : users.find((user) => user.role === "employee") ?? (seedUsers.find((user) => user.role === "employee") as User);
   const employeeGoals = goals.filter((goal) => goal.ownerId === employee.id);
   const validation = validateGoalSet(employeeGoals);
-  const visibleMetricGoals = role === "employee" ? employeeGoals : goals;
 
   function persist(nextGoals: Goal[]) {
     try {
@@ -144,6 +146,33 @@ export function GoalPortal({ initialRole = "employee", profile }: GoalPortalProp
 
   function notify(title: string, description: string) {
     setToast({ title, description });
+  }
+
+  function navigateToSection(sectionId: string) {
+    document.getElementById(sectionId)?.scrollIntoView({ behavior: "smooth", block: "start" });
+    setSidebarOpen(false);
+  }
+
+  function createSharedDemoGoals(ownerIds: string[], primaryOwnerId: string) {
+    const sharedGoalGroupId = `sg_${crypto.randomUUID()}`;
+    const now = new Date().toISOString();
+    return ownerIds.map<Goal>((ownerId) => ({
+      id: `g_${crypto.randomUUID()}`,
+      ownerId,
+      sharedGoalGroupId,
+      primaryOwnerId,
+      thrustArea: "Capability Building",
+      title: "Employee Training Completion",
+      description: "Complete quarterly enablement certification for operating rhythm and governance practices.",
+      uom: "percentage",
+      goalType: "min",
+      target: "100%",
+      weightage: 10,
+      status: "draft",
+      locked: false,
+      createdAt: now,
+      updatedAt: now
+    }));
   }
 
   function resetDemoData() {
@@ -165,11 +194,15 @@ export function GoalPortal({ initialRole = "employee", profile }: GoalPortalProp
 
     try {
       if (editingGoal) {
+        const nextValues =
+          editingGoal.sharedGoalGroupId && editingGoal.primaryOwnerId !== employee.id
+            ? { ...editingGoal, weightage: values.weightage }
+            : values;
         if (useSupabase) {
-          const updatedGoal = await updateSupabaseGoal(editingGoal.id, values);
+          const updatedGoal = await updateSupabaseGoal(editingGoal.id, nextValues);
           setGoals((currentGoals) => currentGoals.map((goal) => (goal.id === updatedGoal.id ? updatedGoal : goal)));
         } else {
-          persist(goals.map((goal) => (goal.id === editingGoal.id ? updateGoal(goal, values) : goal)));
+          persist(goals.map((goal) => (goal.id === editingGoal.id ? updateGoal(goal, nextValues) : goal)));
         }
         setDialogOpen(false);
         setEditingGoal(null);
@@ -253,10 +286,19 @@ export function GoalPortal({ initialRole = "employee", profile }: GoalPortalProp
 
   if (!loaded) {
     return (
-      <div className="flex min-h-screen items-center justify-center bg-background">
-        <div className="flex items-center gap-3 rounded-xl border bg-card px-5 py-4 text-sm shadow-soft">
+      <div className="min-h-screen bg-background p-6 lg:pl-72">
+        <div className="mb-6 flex items-center gap-3 rounded-xl border bg-card px-5 py-4 text-sm shadow-soft">
           <Loader2 className="h-4 w-4 animate-spin" />
           Loading workspace...
+        </div>
+        <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+          {Array.from({ length: 4 }).map((_, index) => (
+            <div key={index} className="h-28 animate-pulse rounded-xl border bg-card" />
+          ))}
+        </div>
+        <div className="mt-6 grid gap-6 xl:grid-cols-2">
+          <div className="h-80 animate-pulse rounded-xl border bg-card" />
+          <div className="h-80 animate-pulse rounded-xl border bg-card" />
         </div>
       </div>
     );
@@ -265,41 +307,53 @@ export function GoalPortal({ initialRole = "employee", profile }: GoalPortalProp
   return (
     <ToastProvider>
       <div className="min-h-screen bg-background">
-        <aside className="fixed inset-y-0 left-0 hidden w-64 border-r bg-card px-4 py-5 lg:block">
-          <div className="mb-8 flex items-center gap-3 px-2">
-            <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-primary text-primary-foreground">
-              <LayoutDashboard className="h-5 w-5" />
-            </div>
-            <div>
-              <p className="font-semibold">GoalOS</p>
-              <p className="text-xs text-muted-foreground">Phase 1 MVP</p>
-            </div>
-          </div>
-          <nav className="grid gap-1 text-sm">
-            {[
-              ["Dashboard", LayoutDashboard],
-              ["Goals", ClipboardList],
-              ["Reviews", CheckCircle2],
-              ["Governance", ShieldCheck]
-            ].map(([label, Icon]) => (
-              <button
-                type="button"
-                key={label as string}
-                className="flex items-center gap-3 rounded-lg px-3 py-2 text-left text-muted-foreground hover:bg-muted hover:text-foreground"
-              >
-                <Icon className="h-4 w-4" />
-                {label as string}
-              </button>
-            ))}
-          </nav>
+        <aside className="fixed inset-y-0 left-0 z-30 hidden w-64 border-r bg-card px-4 py-5 lg:block">
+          <SidebarContent role={role} onNavigate={navigateToSection} />
         </aside>
 
-        <main className="lg:pl-64">
+        {sidebarOpen ? (
+          <button
+            type="button"
+            aria-label="Close navigation overlay"
+            className="fixed inset-0 z-40 bg-slate-950/30 backdrop-blur-sm lg:hidden"
+            onClick={() => setSidebarOpen(false)}
+          />
+        ) : null}
+
+        <aside
+          className={cn(
+            "fixed inset-y-0 left-0 z-50 w-[min(18rem,calc(100vw-2rem))] border-r bg-card px-4 py-5 shadow-soft transition-transform duration-200 ease-out lg:hidden",
+            sidebarOpen ? "translate-x-0" : "-translate-x-full"
+          )}
+          aria-hidden={!sidebarOpen}
+        >
+          <div className="mb-4 flex items-center justify-end">
+            <Button type="button" variant="ghost" size="icon" aria-label="Close navigation" onClick={() => setSidebarOpen(false)}>
+              <X className="h-4 w-4" />
+            </Button>
+          </div>
+          <SidebarContent role={role} onNavigate={navigateToSection} />
+        </aside>
+
+        <main className="min-w-0 lg:pl-64">
           <header className="sticky top-0 z-20 border-b bg-background/85 px-4 py-3 backdrop-blur sm:px-6">
             <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-              <div>
-                <h1 className="text-xl font-semibold">{roleCopy[role].title}</h1>
-                <p className="text-sm text-muted-foreground">{roleCopy[role].subtitle}</p>
+              <div className="flex min-w-0 items-start gap-3">
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="icon"
+                  className="shrink-0 lg:hidden"
+                  aria-label="Open navigation"
+                  aria-expanded={sidebarOpen}
+                  onClick={() => setSidebarOpen(true)}
+                >
+                  <Menu className="h-4 w-4" />
+                </Button>
+                <div className="min-w-0">
+                  <h1 className="truncate text-xl font-semibold">{roleCopy[role].title}</h1>
+                  <p className="text-sm text-muted-foreground">{roleCopy[role].subtitle}</p>
+                </div>
               </div>
               <div className="flex items-center gap-3">
                 <div className="hidden text-right text-sm sm:block">
@@ -318,7 +372,7 @@ export function GoalPortal({ initialRole = "employee", profile }: GoalPortalProp
             </div>
           </header>
 
-          <section className="grid gap-6 px-4 py-6 sm:px-6">
+          <section className="grid min-w-0 gap-6 px-4 py-6 sm:px-6">
             {startupError ? (
               <Card className="border-amber-200 bg-amber-50">
                 <CardContent className="flex flex-col gap-3 p-5 sm:flex-row sm:items-center sm:justify-between">
@@ -332,52 +386,89 @@ export function GoalPortal({ initialRole = "employee", profile }: GoalPortalProp
                 </CardContent>
               </Card>
             ) : null}
-            <MetricGrid goals={visibleMetricGoals} role={role} />
-            {role === "employee" ? (
-              <EmployeeDashboard
-                goals={employeeGoals}
+            <div id="dashboard" className="scroll-mt-24">
+              <VisualDashboard
+                role={role}
+                currentUser={currentUser}
+                users={users}
+                goals={goals}
                 reviews={reviews}
-                validation={validation}
-                onCreate={() => {
-                  setEditingGoal(null);
-                  setDialogOpen(true);
-                }}
-                onEdit={(goal) => {
-                  setEditingGoal(goal);
-                  setDialogOpen(true);
-                }}
-                onDelete={removeGoal}
-                onSubmit={submitGoals}
+                achievements={achievements}
               />
+            </div>
+            {role === "employee" ? (
+              <div id="goals" className="scroll-mt-24">
+                <EmployeeDashboard
+                  goals={employeeGoals}
+                  reviews={reviews}
+                  validation={validation}
+                  onCreate={() => {
+                    setEditingGoal(null);
+                    setDialogOpen(true);
+                  }}
+                  onEdit={(goal) => {
+                    setEditingGoal(goal);
+                    setDialogOpen(true);
+                  }}
+                  onDelete={removeGoal}
+                  onSubmit={submitGoals}
+                />
+              </div>
             ) : null}
             {role === "manager" ? (
-              <ManagerDashboard
-                goals={goals}
-                users={users}
-                currentUser={currentUser}
-                setGoals={useSupabase ? setGoals : persist}
-                reviews={reviews}
-                setReviews={setReviews}
-                notify={notify}
-                useSupabase={useSupabase}
-              />
+              <div id="reviews" className="scroll-mt-24">
+                <ManagerDashboard
+                  goals={goals}
+                  users={users}
+                  currentUser={currentUser}
+                  setGoals={useSupabase ? setGoals : persist}
+                  reviews={reviews}
+                  setReviews={setReviews}
+                  notify={notify}
+                  useSupabase={useSupabase}
+                  onPushSharedGoal={async (ownerIds) => {
+                    try {
+                      if (useSupabase) {
+                        const sharedGoals = await pushSupabaseSharedGoal(ownerIds, currentUser.id);
+                        setGoals((currentGoals) => [...currentGoals, ...sharedGoals]);
+                      } else {
+                        persist([...goals, ...createSharedDemoGoals(ownerIds, currentUser.id)]);
+                      }
+                      notify("Shared KPI pushed", "Departmental training goal was added to selected employees.");
+                    } catch (error) {
+                      notify("Push failed", error instanceof Error ? error.message : "Please try again.");
+                    }
+                  }}
+                />
+              </div>
             ) : null}
             {role === "admin" ? (
-              <AdminDashboard goals={goals} users={users} reviews={reviews} setGoals={useSupabase ? setGoals : persist} notify={notify} useSupabase={useSupabase} />
+              <div id="governance" className="scroll-mt-24">
+                <AdminDashboard goals={goals} users={users} reviews={reviews} setGoals={useSupabase ? setGoals : persist} notify={notify} useSupabase={useSupabase} />
+              </div>
             ) : null}
-            <AchievementTracking
-              role={role}
-              currentUser={currentUser}
-              users={users}
-              goals={goals}
-              achievements={achievements}
-              onSave={saveAchievement}
-            />
+            <div id="tracking" className="scroll-mt-24">
+              <AchievementTracking
+                role={role}
+                currentUser={currentUser}
+                users={users}
+                goals={goals}
+                achievements={achievements}
+                onSave={saveAchievement}
+              />
+            </div>
           </section>
         </main>
       </div>
 
-      <GoalFormDialog open={dialogOpen} goal={editingGoal} isSaving={savingGoal} onOpenChange={setDialogOpen} onSubmit={saveGoal} />
+      <GoalFormDialog
+        open={dialogOpen}
+        goal={editingGoal}
+        isSaving={savingGoal}
+        lockSharedFields={Boolean(editingGoal?.sharedGoalGroupId && editingGoal.primaryOwnerId !== employee.id)}
+        onOpenChange={setDialogOpen}
+        onSubmit={saveGoal}
+      />
       {toast ? (
         <Toast open onOpenChange={(open) => !open && setToast(null)}>
           <ToastTitle className="font-semibold">{toast.title}</ToastTitle>
@@ -389,32 +480,45 @@ export function GoalPortal({ initialRole = "employee", profile }: GoalPortalProp
   );
 }
 
-function MetricGrid({ goals, role }: { goals: Goal[]; role: Role }) {
-  const approved = goals.filter((goal) => goal.status === "approved").length;
-  const submitted = goals.filter((goal) => goal.status === "submitted").length;
-  const locked = goals.filter((goal) => goal.locked).length;
-  const cards = [
-    { label: role === "employee" ? "My Goals" : "Total Goals", value: goals.length, icon: ClipboardList },
-    { label: "Submitted", value: submitted, icon: BarChart3 },
-    { label: "Approved", value: approved, icon: CheckCircle2 },
-    { label: "Locked", value: locked, icon: FileLock2 }
+function SidebarContent({ role, onNavigate }: { role: Role; onNavigate: (sectionId: string) => void }) {
+  const navItems = [
+    { label: "Dashboard", sectionId: "dashboard", icon: LayoutDashboard },
+    { label: "Goals", sectionId: role === "employee" ? "goals" : "dashboard", icon: ClipboardList },
+    { label: "Reviews", sectionId: role === "manager" ? "reviews" : "tracking", icon: CheckCircle2 },
+    { label: "Tracking", sectionId: "tracking", icon: Users },
+    { label: "Governance", sectionId: role === "admin" ? "governance" : "dashboard", icon: ShieldCheck }
   ];
 
   return (
-    <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
-      {cards.map(({ label, value, icon: Icon }) => (
-        <Card key={label}>
-          <CardContent className="flex items-center justify-between p-5">
-            <div>
-              <p className="text-sm text-muted-foreground">{label}</p>
-              <p className="mt-1 text-3xl font-semibold">{value}</p>
-            </div>
-            <div className="rounded-xl bg-accent p-3 text-accent-foreground">
-              <Icon className="h-5 w-5" />
-            </div>
-          </CardContent>
-        </Card>
-      ))}
+    <div className="flex h-full min-h-0 flex-col">
+      <div className="mb-8 flex items-center gap-3 px-2">
+        <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-primary text-primary-foreground">
+          <LayoutDashboard className="h-5 w-5" />
+        </div>
+        <div>
+          <p className="font-semibold">GoalOS</p>
+          <p className="text-xs text-muted-foreground">Hackathon MVP</p>
+        </div>
+      </div>
+
+      <nav className="grid gap-1 text-sm">
+        {navItems.map(({ label, sectionId, icon: Icon }) => (
+          <button
+            type="button"
+            key={`${label}-${sectionId}`}
+            className="flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-left text-muted-foreground transition-colors hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            onClick={() => onNavigate(sectionId)}
+          >
+            <Icon className="h-4 w-4 shrink-0" />
+            <span>{label}</span>
+          </button>
+        ))}
+      </nav>
+
+      <div className="mt-auto rounded-xl border bg-muted/30 p-3 text-xs text-muted-foreground">
+        <p className="font-medium text-foreground">Current role</p>
+        <p className="mt-1 capitalize">{role === "admin" ? "Admin / HR" : role}</p>
+      </div>
     </div>
   );
 }
@@ -593,7 +697,8 @@ function ManagerDashboard({
   reviews,
   setReviews,
   notify,
-  useSupabase
+  useSupabase,
+  onPushSharedGoal
 }: {
   goals: Goal[];
   users: User[];
@@ -603,6 +708,7 @@ function ManagerDashboard({
   setReviews: (reviews: ManagerReview[]) => void;
   notify: (title: string, description: string) => void;
   useSupabase: boolean;
+  onPushSharedGoal: (ownerIds: string[]) => Promise<void>;
 }) {
   const submittedOwners = useMemo(() => {
     const ownerIds = new Set(goals.filter((goal) => goal.status === "submitted").map((goal) => goal.ownerId));
@@ -656,11 +762,17 @@ function ManagerDashboard({
   }
 
   if (!submittedOwners.length) {
-    return <EmptyPanel icon={Users} title="No submitted goals" text="Team submissions will appear here for manager review." />;
+    return (
+      <div className="grid gap-6">
+        <SharedGoalPanel users={users} currentUser={currentUser} goals={goals} onPushSharedGoal={onPushSharedGoal} />
+        <EmptyPanel icon={Users} title="No submitted goals" text="Team submissions will appear here for manager review." />
+      </div>
+    );
   }
 
   return (
     <div className="grid gap-6">
+      <SharedGoalPanel users={users} currentUser={currentUser} goals={goals} onPushSharedGoal={onPushSharedGoal} />
       {submittedOwners.map((owner) => {
         const ownerGoals = goals.filter((goal) => goal.ownerId === owner.id && goal.status === "submitted");
         const reviewValidation = validateGoalSet(ownerGoals);
@@ -738,6 +850,56 @@ function ManagerDashboard({
         );
       })}
     </div>
+  );
+}
+
+function SharedGoalPanel({
+  users,
+  currentUser,
+  goals,
+  onPushSharedGoal
+}: {
+  users: User[];
+  currentUser: User;
+  goals: Goal[];
+  onPushSharedGoal: (ownerIds: string[]) => Promise<void>;
+}) {
+  const teamMembers = users.filter((user) => user.managerId === currentUser.id);
+  const alreadyAssigned = new Set(goals.filter((goal) => goal.title === "Employee Training Completion").map((goal) => goal.ownerId));
+  const pendingOwners = teamMembers.filter((user) => !alreadyAssigned.has(user.id)).map((user) => user.id);
+
+  return (
+    <Card>
+      <CardHeader className="flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+        <div>
+          <CardTitle>Shared departmental KPI</CardTitle>
+          <p className="text-sm text-muted-foreground">
+            Push Employee Training Completion to direct reports. Recipients can adjust weightage only.
+          </p>
+        </div>
+        <Button type="button" variant="outline" disabled={!pendingOwners.length} onClick={() => onPushSharedGoal(pendingOwners)}>
+          Push KPI
+        </Button>
+      </CardHeader>
+      <CardContent>
+        <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-4">
+          {teamMembers.map((user) => {
+            const assigned = goals.some((goal) => goal.ownerId === user.id && goal.title === "Employee Training Completion");
+            return (
+              <div key={user.id} className="rounded-lg border bg-muted/30 px-3 py-2 text-sm">
+                <div className="flex items-center justify-between gap-2">
+                  <span className="font-medium">{user.name}</span>
+                  <span className={cn("rounded-full px-2 py-0.5 text-[11px] font-medium", assigned ? "bg-emerald-50 text-emerald-700" : "bg-slate-100 text-slate-700")}>
+                    {assigned ? "Assigned" : "Ready"}
+                  </span>
+                </div>
+                <p className="mt-1 text-xs text-muted-foreground">{user.department ?? "Team member"}</p>
+              </div>
+            );
+          })}
+        </div>
+      </CardContent>
+    </Card>
   );
 }
 

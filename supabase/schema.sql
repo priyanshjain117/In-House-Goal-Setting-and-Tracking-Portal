@@ -42,6 +42,8 @@ create table if not exists public.users (
 create table if not exists public.goals (
   id uuid primary key default gen_random_uuid(),
   employee_id uuid not null references public.users(id) on delete cascade,
+  shared_goal_group_id uuid,
+  primary_owner_id uuid references public.users(id) on delete set null,
   thrust_area text not null,
   title text not null,
   description text not null,
@@ -72,6 +74,9 @@ begin
       check (uom in ('numeric', 'percentage', 'timeline', 'zero_based'));
   end if;
 end $$;
+
+alter table public.goals add column if not exists shared_goal_group_id uuid;
+alter table public.goals add column if not exists primary_owner_id uuid references public.users(id) on delete set null;
 
 create table if not exists public.manager_reviews (
   id uuid primary key default gen_random_uuid(),
@@ -125,9 +130,21 @@ create table if not exists public.progress_snapshots (
   captured_at timestamptz not null default now()
 );
 
+create table if not exists public.audit_logs (
+  id uuid primary key default gen_random_uuid(),
+  actor_id uuid references public.users(id) on delete set null,
+  entity_type text not null,
+  entity_id uuid,
+  action text not null,
+  before_payload jsonb,
+  after_payload jsonb,
+  created_at timestamptz not null default now()
+);
+
 create index if not exists users_manager_id_idx on public.users(manager_id);
 create index if not exists goals_employee_status_idx on public.goals(employee_id, status);
 create index if not exists goals_created_at_idx on public.goals(created_at);
+create index if not exists goals_shared_goal_group_idx on public.goals(shared_goal_group_id);
 create index if not exists manager_reviews_goal_id_idx on public.manager_reviews(goal_id);
 create index if not exists manager_reviews_manager_id_idx on public.manager_reviews(manager_id);
 create index if not exists achievement_updates_employee_quarter_idx on public.achievement_updates(employee_id, quarter);
@@ -135,6 +152,8 @@ create index if not exists achievement_updates_goal_quarter_idx on public.achiev
 create index if not exists quarterly_reviews_employee_quarter_idx on public.quarterly_reviews(employee_id, quarter);
 create index if not exists check_ins_achievement_id_idx on public.check_ins(achievement_id);
 create index if not exists progress_snapshots_goal_quarter_idx on public.progress_snapshots(goal_id, quarter);
+create index if not exists audit_logs_actor_created_idx on public.audit_logs(actor_id, created_at desc);
+create index if not exists audit_logs_entity_idx on public.audit_logs(entity_type, entity_id);
 
 create or replace function public.set_updated_at()
 returns trigger
@@ -232,6 +251,7 @@ alter table public.achievement_updates enable row level security;
 alter table public.quarterly_reviews enable row level security;
 alter table public.check_ins enable row level security;
 alter table public.progress_snapshots enable row level security;
+alter table public.audit_logs enable row level security;
 
 drop policy if exists "Users can read self team and admin profiles" on public.users;
 create policy "Users can read self team and admin profiles"
@@ -468,5 +488,17 @@ using (
       and (employee.id = auth.uid() or employee.manager_id = auth.uid())
   )
 );
+
+drop policy if exists "Admins read audit logs" on public.audit_logs;
+create policy "Admins read audit logs"
+on public.audit_logs for select
+to authenticated
+using (public.current_user_role() = 'admin');
+
+drop policy if exists "Authenticated users create audit logs" on public.audit_logs;
+create policy "Authenticated users create audit logs"
+on public.audit_logs for insert
+to authenticated
+with check (actor_id = auth.uid() or public.current_user_role() = 'admin');
 
 notify pgrst, 'reload schema';

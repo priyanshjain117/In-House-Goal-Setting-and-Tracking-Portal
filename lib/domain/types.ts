@@ -21,6 +21,8 @@ export interface User {
 export interface Goal {
   id: string;
   ownerId: string;
+  sharedGoalGroupId?: string | null;
+  primaryOwnerId?: string | null;
   thrustArea: string;
   title: string;
   description: string;

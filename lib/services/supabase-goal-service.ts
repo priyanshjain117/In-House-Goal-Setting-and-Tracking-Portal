@@ -20,6 +20,8 @@ import { createClient } from "@/lib/supabase/client";
 type GoalRow = {
   id: string;
   employee_id: string;
+  shared_goal_group_id?: string | null;
+  primary_owner_id?: string | null;
   thrust_area: string;
   title: string;
   description: string;
@@ -71,6 +73,8 @@ function toGoal(row: GoalRow): Goal {
   return {
     id: row.id,
     ownerId: row.employee_id,
+    sharedGoalGroupId: row.shared_goal_group_id ?? null,
+    primaryOwnerId: row.primary_owner_id ?? null,
     thrustArea: row.thrust_area,
     title: row.title,
     description: row.description,
@@ -172,6 +176,31 @@ export async function insertSupabaseGoal(ownerId: string, values: GoalFormValues
 
   if (error) throw new Error(error.message);
   return toGoal(data as GoalRow);
+}
+
+export async function pushSupabaseSharedGoal(ownerIds: string[], primaryOwnerId: string) {
+  const supabase = createClient();
+  const sharedGoalGroupId = crypto.randomUUID();
+  const { data, error } = await supabase
+    .from("goals")
+    .insert(
+      ownerIds.map((ownerId) => ({
+        employee_id: ownerId,
+        shared_goal_group_id: sharedGoalGroupId,
+        primary_owner_id: primaryOwnerId,
+        thrust_area: "Capability Building",
+        title: "Employee Training Completion",
+        description: "Complete quarterly enablement certification for operating rhythm and governance practices.",
+        uom: "percentage",
+        goal_type: "min",
+        target: "100%",
+        weightage: 10
+      }))
+    )
+    .select("*");
+
+  if (error) throw new Error(error.message);
+  return (data ?? []).map((row) => toGoal(row as GoalRow));
 }
 
 export async function updateSupabaseGoal(goalId: string, values: GoalFormValues) {

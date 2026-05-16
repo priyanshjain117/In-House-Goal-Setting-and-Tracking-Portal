@@ -8,7 +8,7 @@ import { Input } from "@/components/ui/input";
 import { Progress } from "@/components/ui/progress";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
-import { getLatestAchievement, getWeightedProgress, progressStatusLabels, quarters } from "@/lib/domain/progress";
+import { calculateProgressPercent, getLatestAchievement, getWeightedProgress, progressStatusLabels, quarters } from "@/lib/domain/progress";
 import type { AchievementFormValues, AchievementUpdate, Goal, GoalProgressStatus, Quarter, Role, User } from "@/lib/domain/types";
 import { cn } from "@/lib/utils";
 
@@ -54,7 +54,8 @@ export function AchievementTracking({ role, currentUser, users, goals, achieveme
             Track planned vs actual progress for approved goals. Progress is calculated from the goal UoM and Min/Max rule.
           </p>
         </CardHeader>
-        <CardContent>
+        <CardContent className="grid gap-4">
+          <CheckInSchedule />
           {approvedGoals.length ? (
             <div className="grid gap-4">
               {approvedGoals.map((goal) => (
@@ -81,6 +82,28 @@ export function AchievementTracking({ role, currentUser, users, goals, achieveme
   );
 }
 
+function CheckInSchedule() {
+  const windows = [
+    ["Goal Setting", "1 May", "Creation, submission, approval"],
+    ["Q1", "July", "Planned vs actual update"],
+    ["Q2", "October", "Planned vs actual update"],
+    ["Q3", "January", "Planned vs actual update"],
+    ["Q4 / Annual", "March / April", "Final achievement capture"]
+  ];
+
+  return (
+    <div className="grid gap-2 rounded-xl border bg-muted/30 p-3 md:grid-cols-5">
+      {windows.map(([period, opens, action]) => (
+        <div key={period} className="rounded-lg bg-card p-3">
+          <p className="text-xs font-medium text-muted-foreground">{period}</p>
+          <p className="mt-1 text-sm font-semibold">{opens}</p>
+          <p className="mt-1 text-xs text-muted-foreground">{action}</p>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 function AchievementGoalRow({
   role,
   owner,
@@ -102,6 +125,9 @@ function AchievementGoalRow({
     managerComment: achievement?.managerComment ?? ""
   });
   const [saving, setSaving] = useState(false);
+  const canEditEmployeeFields = role === "employee" || role === "admin";
+  const canEditManagerComment = role === "manager" || role === "admin";
+  const previewProgress = calculateProgressPercent(goal, values.actualValue, values.status);
 
   useEffect(() => {
     setValues({
@@ -137,15 +163,19 @@ function AchievementGoalRow({
         </div>
         <div className="w-full max-w-xs">
           <div className="mb-2 flex justify-between text-xs text-muted-foreground">
-            <span>Progress</span>
-            <span>{achievement?.progressPercent ?? 0}%</span>
+            <span>{achievement ? "Saved progress" : "Preview progress"}</span>
+            <span>{achievement?.progressPercent ?? previewProgress}%</span>
           </div>
-          <Progress value={achievement?.progressPercent ?? 0} />
+          <Progress value={achievement?.progressPercent ?? previewProgress} />
         </div>
       </div>
 
       <div className="mt-4 grid gap-3 lg:grid-cols-[120px_1fr_160px]">
-        <Select value={values.quarter} onValueChange={(quarter: Quarter) => setValues((current) => ({ ...current, quarter }))}>
+        <Select
+          value={values.quarter}
+          disabled={!canEditEmployeeFields}
+          onValueChange={(quarter: Quarter) => setValues((current) => ({ ...current, quarter }))}
+        >
           <SelectTrigger><SelectValue /></SelectTrigger>
           <SelectContent>
             {quarters.map((quarter) => (
@@ -157,9 +187,11 @@ function AchievementGoalRow({
           value={values.actualValue}
           onChange={(event) => setValues((current) => ({ ...current, actualValue: event.target.value }))}
           placeholder={goal.uom === "timeline" ? "2026-06-30" : "Actual achievement"}
+          disabled={!canEditEmployeeFields}
         />
         <Select
           value={values.status}
+          disabled={!canEditEmployeeFields}
           onValueChange={(status: GoalProgressStatus) => setValues((current) => ({ ...current, status }))}
         >
           <SelectTrigger><SelectValue /></SelectTrigger>
@@ -176,12 +208,13 @@ function AchievementGoalRow({
           value={values.employeeComment}
           onChange={(event) => setValues((current) => ({ ...current, employeeComment: event.target.value }))}
           placeholder="Employee quarterly update"
+          disabled={!canEditEmployeeFields}
         />
         <Textarea
           value={values.managerComment}
           onChange={(event) => setValues((current) => ({ ...current, managerComment: event.target.value }))}
           placeholder={role === "employee" ? "Manager check-in comments appear here" : "Manager check-in comment"}
-          disabled={role === "employee"}
+          disabled={!canEditManagerComment}
         />
       </div>
 

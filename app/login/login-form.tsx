@@ -10,6 +10,7 @@ import { Label } from "@/components/ui/label";
 
 const demos = [
   ["Employee", "employee@demo.com", "Employee123"],
+  ["Team Employee", "nisha@demo.com", "Employee123"],
   ["Manager", "manager@demo.com", "Manager123"],
   ["Admin/HR", "admin@demo.com", "Admin123"]
 ];
