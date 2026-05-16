@@ -1,5 +1,5 @@
 import { z } from "zod";
-import type { Goal, GoalFormValues } from "./types";
+import type { Goal, GoalFormValues, GoalStatus } from "./types";
 
 export const MAX_GOALS = 8;
 export const MIN_WEIGHTAGE = 10;
@@ -23,6 +23,10 @@ export type GoalValidationResult = {
   totalWeightage: number;
   issues: string[];
 };
+
+export function isEmployeeEditableStatus(status: GoalStatus) {
+  return status === "draft" || status === "rejected";
+}
 
 export function getTotalWeightage(goals: Pick<Goal, "weightage">[]) {
   return goals.reduce((total, goal) => total + Number(goal.weightage || 0), 0);

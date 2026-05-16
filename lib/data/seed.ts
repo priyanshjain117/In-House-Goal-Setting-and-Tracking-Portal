@@ -69,6 +69,21 @@ export const seedGoals: Goal[] = [
     updatedAt: "2026-04-02T09:00:00.000Z"
   },
   {
+    id: "g_5",
+    ownerId: "u_employee",
+    thrustArea: "Capability Building",
+    title: "Publish operating playbook",
+    description: "Document repeatable intake, triage, and closure practices for product operations.",
+    uom: "timeline",
+    goalType: "min",
+    target: "May 31",
+    weightage: 45,
+    status: "draft",
+    locked: false,
+    createdAt: "2026-04-02T10:00:00.000Z",
+    updatedAt: "2026-04-02T10:00:00.000Z"
+  },
+  {
     id: "g_3",
     ownerId: "u_employee_2",
     thrustArea: "Planning",

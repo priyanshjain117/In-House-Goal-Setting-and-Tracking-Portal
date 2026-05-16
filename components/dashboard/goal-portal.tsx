@@ -1,6 +1,16 @@
 "use client";
 
-import { BarChart3, CheckCircle2, ClipboardList, FileLock2, LayoutDashboard, Plus, ShieldCheck, Users } from "lucide-react";
+import {
+  AlertCircle,
+  BarChart3,
+  CheckCircle2,
+  ClipboardList,
+  FileLock2,
+  LayoutDashboard,
+  Plus,
+  ShieldCheck,
+  Users
+} from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { GoalFormDialog } from "@/components/goals/goal-form-dialog";
 import { Button } from "@/components/ui/button";
@@ -11,14 +21,15 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Textarea } from "@/components/ui/textarea";
 import { Toast, ToastDescription, ToastProvider, ToastTitle, ToastViewport } from "@/components/ui/toast";
 import { seedUsers } from "@/lib/data/seed";
-import { MAX_GOALS, validateGoalSet } from "@/lib/domain/goal-validation";
-import type { Goal, GoalFormValues, Role, User } from "@/lib/domain/types";
+import { MAX_GOALS, isEmployeeEditableStatus, validateGoalSet } from "@/lib/domain/goal-validation";
+import type { Goal, GoalFormValues, ManagerReview, Role, User } from "@/lib/domain/types";
 import { cn } from "@/lib/utils";
 import {
   createGoal,
   decideEmployeeGoals,
   loadGoals,
   loadReviews,
+  resetWorkspaceData,
   saveGoals,
   saveReviews,
   submitEmployeeGoals,
@@ -44,29 +55,55 @@ const roleCopy: Record<Role, { title: string; subtitle: string }> = {
 export function GoalPortal() {
   const [role, setRole] = useState<Role>("employee");
   const [goals, setGoals] = useState<Goal[]>([]);
+  const [reviews, setReviews] = useState<ManagerReview[]>([]);
   const [loaded, setLoaded] = useState(false);
+  const [startupError, setStartupError] = useState<string | null>(null);
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editingGoal, setEditingGoal] = useState<Goal | null>(null);
   const [toast, setToast] = useState<{ title: string; description: string } | null>(null);
 
   useEffect(() => {
-    setGoals(loadGoals());
-    loadReviews();
-    setLoaded(true);
+    try {
+      setGoals(loadGoals());
+      setReviews(loadReviews());
+    } catch (error) {
+      setGoals([]);
+      setReviews([]);
+      setStartupError(error instanceof Error ? error.message : "Unable to load workspace data.");
+    } finally {
+      setLoaded(true);
+    }
   }, []);
 
   const currentUser = seedUsers.find((user) => user.role === role) as User;
   const employee = seedUsers.find((user) => user.id === "u_employee") as User;
   const employeeGoals = goals.filter((goal) => goal.ownerId === employee.id);
   const validation = validateGoalSet(employeeGoals);
+  const visibleMetricGoals = role === "employee" ? employeeGoals : goals;
 
   function persist(nextGoals: Goal[]) {
-    setGoals(nextGoals);
-    saveGoals(nextGoals);
+    try {
+      setGoals(nextGoals);
+      saveGoals(nextGoals);
+    } catch (error) {
+      notify("Unable to save", error instanceof Error ? error.message : "Please try again.");
+    }
   }
 
   function notify(title: string, description: string) {
     setToast({ title, description });
+  }
+
+  function resetDemoData() {
+    try {
+      resetWorkspaceData();
+      setGoals(loadGoals());
+      setReviews(loadReviews());
+      setStartupError(null);
+      notify("Workspace reset", "Demo data has been restored.");
+    } catch (error) {
+      notify("Reset failed", error instanceof Error ? error.message : "Please clear site data and reload.");
+    }
   }
 
   function saveGoal(values: GoalFormValues) {
@@ -122,6 +159,7 @@ export function GoalPortal() {
               ["Governance", ShieldCheck]
             ].map(([label, Icon]) => (
               <button
+                type="button"
                 key={label as string}
                 className="flex items-center gap-3 rounded-lg px-3 py-2 text-left text-muted-foreground hover:bg-muted hover:text-foreground"
               >
@@ -141,7 +179,7 @@ export function GoalPortal() {
               </div>
               <div className="flex items-center gap-3">
                 <Select value={role} onValueChange={(value: Role) => setRole(value)}>
-                  <SelectTrigger className="w-40"><SelectValue /></SelectTrigger>
+              <SelectTrigger className="w-40"><SelectValue /></SelectTrigger>
                   <SelectContent>
                     <SelectItem value="employee">Employee</SelectItem>
                     <SelectItem value="manager">Manager</SelectItem>
@@ -157,10 +195,24 @@ export function GoalPortal() {
           </header>
 
           <section className="grid gap-6 px-4 py-6 sm:px-6">
-            <MetricGrid goals={goals} role={role} />
+            {startupError ? (
+              <Card className="border-amber-200 bg-amber-50">
+                <CardContent className="flex flex-col gap-3 p-5 sm:flex-row sm:items-center sm:justify-between">
+                  <div>
+                    <p className="font-medium text-amber-900">Workspace data could not be loaded</p>
+                    <p className="text-sm text-amber-800">{startupError}</p>
+                  </div>
+                  <Button type="button" variant="outline" onClick={resetDemoData}>
+                    Reset demo data
+                  </Button>
+                </CardContent>
+              </Card>
+            ) : null}
+            <MetricGrid goals={visibleMetricGoals} role={role} />
             {role === "employee" ? (
               <EmployeeDashboard
                 goals={employeeGoals}
+                reviews={reviews}
                 validation={validation}
                 onCreate={() => {
                   setEditingGoal(null);
@@ -175,9 +227,9 @@ export function GoalPortal() {
               />
             ) : null}
             {role === "manager" ? (
-              <ManagerDashboard goals={goals} setGoals={persist} notify={notify} />
+              <ManagerDashboard goals={goals} setGoals={persist} reviews={reviews} setReviews={setReviews} notify={notify} />
             ) : null}
-            {role === "admin" ? <AdminDashboard goals={goals} setGoals={persist} notify={notify} /> : null}
+            {role === "admin" ? <AdminDashboard goals={goals} reviews={reviews} setGoals={persist} notify={notify} /> : null}
           </section>
         </main>
       </div>
@@ -226,6 +278,7 @@ function MetricGrid({ goals, role }: { goals: Goal[]; role: Role }) {
 
 function EmployeeDashboard({
   goals,
+  reviews,
   validation,
   onCreate,
   onEdit,
@@ -233,13 +286,16 @@ function EmployeeDashboard({
   onSubmit
 }: {
   goals: Goal[];
+  reviews: ManagerReview[];
   validation: ReturnType<typeof validateGoalSet>;
   onCreate: () => void;
   onEdit: (goal: Goal) => void;
   onDelete: (goalId: string) => void;
   onSubmit: () => void;
 }) {
-  const locked = goals.some((goal) => goal.locked);
+  const hasSubmittedGoals = goals.some((goal) => goal.status === "submitted");
+  const editableGoalCount = goals.filter((goal) => isEmployeeEditableStatus(goal.status) && !goal.locked).length;
+  const canSubmit = validation.canSubmit && editableGoalCount > 0 && !hasSubmittedGoals;
   return (
     <div className="grid gap-6 xl:grid-cols-[1fr_340px]">
       <Card>
@@ -248,13 +304,13 @@ function EmployeeDashboard({
             <CardTitle>Goal plan</CardTitle>
             <p className="text-sm text-muted-foreground">Up to 8 goals, each with at least 10% weightage.</p>
           </div>
-          <Button onClick={onCreate} disabled={locked || goals.length >= MAX_GOALS}>
+          <Button onClick={onCreate} disabled={goals.length >= MAX_GOALS}>
             <Plus className="h-4 w-4" />
             New Goal
           </Button>
         </CardHeader>
         <CardContent>
-          <GoalTable goals={goals} onEdit={onEdit} onDelete={onDelete} editable={!locked} />
+          <GoalTable goals={goals} reviews={reviews} onEdit={onEdit} onDelete={onDelete} />
         </CardContent>
       </Card>
 
@@ -281,10 +337,15 @@ function EmployeeDashboard({
           ) : (
             <div className="rounded-xl bg-emerald-50 p-3 text-sm text-emerald-800">Ready for manager approval.</div>
           )}
-          <Button disabled={!validation.canSubmit || locked} onClick={onSubmit}>
+          {hasSubmittedGoals ? (
+            <div className="rounded-xl bg-blue-50 p-3 text-sm text-blue-800">
+              Submitted goals are with your manager. Returned goals can be edited and resubmitted.
+            </div>
+          ) : null}
+          <Button disabled={!canSubmit} onClick={onSubmit}>
             Submit goals
           </Button>
-          {locked ? <p className="text-sm text-muted-foreground">Approved goals are locked for employees.</p> : null}
+          <p className="text-sm text-muted-foreground">Approved goals stay visible but locked. Admins can unlock exceptions.</p>
         </CardContent>
       </Card>
     </div>
@@ -293,12 +354,12 @@ function EmployeeDashboard({
 
 function GoalTable({
   goals,
-  editable,
+  reviews,
   onEdit,
   onDelete
 }: {
   goals: Goal[];
-  editable: boolean;
+  reviews?: ManagerReview[];
   onEdit?: (goal: Goal) => void;
   onDelete?: (goalId: string) => void;
 }) {
@@ -325,28 +386,49 @@ function GoalTable({
           </tr>
         </thead>
         <tbody className="divide-y">
-          {goals.map((goal) => (
-            <tr key={goal.id} className="align-top">
-              <td className="py-4 pr-4">
-                <p className="font-medium">{goal.title}</p>
-                <p className="text-xs text-muted-foreground">{goal.thrustArea}</p>
-              </td>
-              <td className="py-4 pr-4 capitalize">{goal.uom.replace("_", " ")}</td>
-              <td className="py-4 pr-4">{goal.target}</td>
-              <td className="py-4 pr-4">{goal.weightage}%</td>
-              <td className="py-4 pr-4"><StatusBadge status={goal.status} /></td>
-              <td className="py-4 text-right">
-                <div className="flex justify-end gap-2">
-                  <Button size="sm" variant="outline" disabled={!editable || goal.status !== "draft"} onClick={() => onEdit?.(goal)}>
-                    Edit
-                  </Button>
-                  <Button size="sm" variant="ghost" disabled={!editable || goal.status !== "draft"} onClick={() => onDelete?.(goal.id)}>
-                    Delete
-                  </Button>
-                </div>
-              </td>
-            </tr>
-          ))}
+          {goals.map((goal) => {
+            const latestReview = reviews
+              ?.filter((review) => review.goalId === goal.id)
+              .sort((a, b) => b.createdAt.localeCompare(a.createdAt))[0];
+            return (
+              <tr key={goal.id} className="align-top">
+                <td className="py-4 pr-4">
+                  <p className="font-medium">{goal.title}</p>
+                  <p className="text-xs text-muted-foreground">{goal.thrustArea}</p>
+                  <p className="mt-1 line-clamp-2 max-w-md text-xs text-muted-foreground">{goal.description}</p>
+                  {latestReview?.comment ? (
+                    <p className="mt-2 rounded-lg bg-muted px-2 py-1 text-xs text-muted-foreground">
+                      Manager comment: {latestReview.comment}
+                    </p>
+                  ) : null}
+                </td>
+                <td className="py-4 pr-4 capitalize">{goal.uom.replace("_", " ")}</td>
+                <td className="py-4 pr-4">{goal.target}</td>
+                <td className="py-4 pr-4">{goal.weightage}%</td>
+                <td className="py-4 pr-4"><StatusBadge status={goal.status} /></td>
+                <td className="py-4 text-right">
+                  <div className="flex justify-end gap-2">
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      disabled={goal.locked || !isEmployeeEditableStatus(goal.status)}
+                      onClick={() => onEdit?.(goal)}
+                    >
+                      Edit
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      disabled={goal.locked || !isEmployeeEditableStatus(goal.status)}
+                      onClick={() => onDelete?.(goal.id)}
+                    >
+                      Delete
+                    </Button>
+                  </div>
+                </td>
+              </tr>
+            );
+          })}
         </tbody>
       </table>
     </div>
@@ -356,10 +438,14 @@ function GoalTable({
 function ManagerDashboard({
   goals,
   setGoals,
+  reviews,
+  setReviews,
   notify
 }: {
   goals: Goal[];
   setGoals: (goals: Goal[]) => void;
+  reviews: ManagerReview[];
+  setReviews: (reviews: ManagerReview[]) => void;
   notify: (title: string, description: string) => void;
 }) {
   const submittedOwners = useMemo(() => {
@@ -373,8 +459,19 @@ function ManagerDashboard({
   }
 
   function decide(ownerId: string, status: "approved" | "rejected") {
-    const result = decideEmployeeGoals(goals, loadReviews(), ownerId, "u_manager", status, comment);
+    const ownerGoals = goals.filter((goal) => goal.ownerId === ownerId && goal.status === "submitted");
+    const reviewValidation = validateGoalSet(ownerGoals);
+    if (status === "approved" && !reviewValidation.canSubmit) {
+      notify("Approval blocked", reviewValidation.issues.join(" "));
+      return;
+    }
+    if (status === "rejected" && comment.trim().length < 3) {
+      notify("Comment required", "Add a short rework comment before returning goals.");
+      return;
+    }
+    const result = decideEmployeeGoals(goals, reviews, ownerId, "u_manager", status, comment.trim());
     setGoals(result.updatedGoals);
+    setReviews(result.updatedReviews);
     saveReviews(result.updatedReviews);
     notify(status === "approved" ? "Goals approved" : "Goals rejected", "The employee plan has been updated.");
   }
@@ -387,6 +484,7 @@ function ManagerDashboard({
     <div className="grid gap-6">
       {submittedOwners.map((owner) => {
         const ownerGoals = goals.filter((goal) => goal.ownerId === owner.id && goal.status === "submitted");
+        const reviewValidation = validateGoalSet(ownerGoals);
         return (
           <Card key={owner.id}>
             <CardHeader className="flex-row items-start justify-between">
@@ -431,10 +529,30 @@ function ManagerDashboard({
                   </tbody>
                 </table>
               </div>
-              <Textarea value={comment} onChange={(event) => setComment(event.target.value)} />
+              <div className="rounded-xl border bg-muted/30 p-3">
+                <div className="mb-2 flex items-center justify-between text-sm">
+                  <span className="text-muted-foreground">Submitted weightage</span>
+                  <span className={cn("font-medium", reviewValidation.canSubmit ? "text-emerald-700" : "text-amber-700")}>
+                    {reviewValidation.totalWeightage}%
+                  </span>
+                </div>
+                <Progress value={Math.min(reviewValidation.totalWeightage, 100)} />
+                {reviewValidation.issues.length ? (
+                  <div className="mt-3 flex gap-2 rounded-lg bg-amber-50 p-2 text-sm text-amber-800">
+                    <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
+                    <span>{reviewValidation.issues.join(" ")}</span>
+                  </div>
+                ) : null}
+              </div>
+              <Textarea
+                aria-label={`Manager review comment for ${owner.name}`}
+                value={comment}
+                onChange={(event) => setComment(event.target.value)}
+                placeholder="Add review comments for the employee."
+              />
               <div className="flex justify-end gap-2">
                 <Button variant="outline" onClick={() => decide(owner.id, "rejected")}>Reject</Button>
-                <Button onClick={() => decide(owner.id, "approved")}>Approve</Button>
+                <Button disabled={!reviewValidation.canSubmit} onClick={() => decide(owner.id, "approved")}>Approve</Button>
               </div>
             </CardContent>
           </Card>
@@ -446,10 +564,12 @@ function ManagerDashboard({
 
 function AdminDashboard({
   goals,
+  reviews,
   setGoals,
   notify
 }: {
   goals: Goal[];
+  reviews: ManagerReview[];
   setGoals: (goals: Goal[]) => void;
   notify: (title: string, description: string) => void;
 }) {
@@ -481,11 +601,19 @@ function AdminDashboard({
             <tbody className="divide-y">
               {goals.map((goal) => {
                 const owner = seedUsers.find((user) => user.id === goal.ownerId);
+                const latestReview = reviews
+                  .filter((review) => review.goalId === goal.id)
+                  .sort((a, b) => b.createdAt.localeCompare(a.createdAt))[0];
                 return (
                   <tr key={goal.id}>
                     <td className="py-4 pr-4 font-medium">{owner?.name}</td>
                     <td className="py-4 pr-4 text-muted-foreground">{owner?.department}</td>
-                    <td className="py-4 pr-4">{goal.title}</td>
+                    <td className="py-4 pr-4">
+                      <p>{goal.title}</p>
+                      {latestReview?.comment ? (
+                        <p className="mt-1 max-w-sm text-xs text-muted-foreground">{latestReview.comment}</p>
+                      ) : null}
+                    </td>
                     <td className="py-4 pr-4">{goal.weightage}%</td>
                     <td className="py-4 pr-4"><StatusBadge status={goal.status} /></td>
                     <td className="py-4 pr-4">{goal.locked ? "Yes" : "No"}</td>

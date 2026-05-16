@@ -12,16 +12,35 @@ function now() {
 
 function readJson<T>(key: string, fallback: T): T {
   if (typeof window === "undefined") return fallback;
-  const raw = window.localStorage.getItem(key);
-  if (!raw) {
-    window.localStorage.setItem(key, JSON.stringify(fallback));
+  try {
+    const raw = window.localStorage.getItem(key);
+    if (!raw) {
+      safeSetJson(key, fallback);
+      return fallback;
+    }
+    return JSON.parse(raw) as T;
+  } catch {
+    safeSetJson(key, fallback);
     return fallback;
   }
-  return JSON.parse(raw) as T;
+}
+
+function safeSetJson<T>(key: string, value: T) {
+  window.localStorage.setItem(key, JSON.stringify(value));
 }
 
 function writeJson<T>(key: string, value: T) {
-  window.localStorage.setItem(key, JSON.stringify(value));
+  try {
+    safeSetJson(key, value);
+  } catch {
+    throw new Error("Unable to save changes in this browser session.");
+  }
+}
+
+export function resetWorkspaceData() {
+  if (typeof window === "undefined") return;
+  safeSetJson(GOALS_KEY, seedGoals);
+  safeSetJson(REVIEWS_KEY, seedReviews);
 }
 
 export function loadGoals(): Goal[] {
@@ -62,7 +81,7 @@ export function updateGoal(goal: Goal, values: Partial<GoalFormValues>): Goal {
 
 export function submitEmployeeGoals(goals: Goal[], ownerId: string) {
   return goals.map((goal) =>
-    goal.ownerId === ownerId && goal.status !== "approved"
+    goal.ownerId === ownerId && (goal.status === "draft" || goal.status === "rejected")
       ? { ...goal, status: "submitted" as const, updatedAt: now() }
       : goal
   );
@@ -81,7 +100,7 @@ export function decideEmployeeGoals(
       ? {
           ...goal,
           status,
-          locked: status === "approved",
+          locked: status === "approved" ? true : false,
           updatedAt: now()
         }
       : goal

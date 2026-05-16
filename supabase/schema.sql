@@ -39,7 +39,8 @@ create table public.goals (
   created_by uuid references public.users(id),
   updated_by uuid references public.users(id),
   created_at timestamptz not null default now(),
-  updated_at timestamptz not null default now()
+  updated_at timestamptz not null default now(),
+  constraint approved_goals_are_locked check (status <> 'approved' or locked = true)
 );
 
 create table public.manager_reviews (
@@ -56,6 +57,54 @@ create index users_manager_id_idx on public.users(manager_id);
 create index goals_owner_status_idx on public.goals(owner_id, status);
 create index goals_cycle_status_idx on public.goals(cycle_key, status);
 create index manager_reviews_goal_id_idx on public.manager_reviews(goal_id);
+
+create or replace function public.set_updated_at()
+returns trigger
+language plpgsql
+as $$
+begin
+  new.updated_at = now();
+  return new;
+end;
+$$;
+
+create trigger set_users_updated_at
+before update on public.users
+for each row execute function public.set_updated_at();
+
+create trigger set_goals_updated_at
+before update on public.goals
+for each row execute function public.set_updated_at();
+
+create or replace function public.prevent_locked_goal_edits()
+returns trigger
+language plpgsql
+as $$
+begin
+  if old.locked = true and old.status = 'approved' and new.locked = true then
+    raise exception 'Approved locked goals must be unlocked before editing';
+  end if;
+  return new;
+end;
+$$;
+
+create trigger prevent_locked_goal_edits
+before update on public.goals
+for each row
+when (
+  old.locked = true
+  and old.status = 'approved'
+  and (
+    old.thrust_area is distinct from new.thrust_area
+    or old.title is distinct from new.title
+    or old.description is distinct from new.description
+    or old.uom is distinct from new.uom
+    or old.goal_type is distinct from new.goal_type
+    or old.target is distinct from new.target
+    or old.weightage is distinct from new.weightage
+  )
+)
+execute function public.prevent_locked_goal_edits();
 
 alter table public.users enable row level security;
 alter table public.goals enable row level security;

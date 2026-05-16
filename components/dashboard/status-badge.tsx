@@ -8,10 +8,17 @@ const styles: Record<GoalStatus, string> = {
   rejected: "bg-rose-50 text-rose-700"
 };
 
+const labels: Record<GoalStatus, string> = {
+  draft: "Draft",
+  submitted: "Submitted",
+  approved: "Approved",
+  rejected: "Returned"
+};
+
 export function StatusBadge({ status }: { status: GoalStatus }) {
   return (
-    <span className={cn("inline-flex rounded-full px-2.5 py-1 text-xs font-medium capitalize", styles[status])}>
-      {status}
+    <span className={cn("inline-flex rounded-full px-2.5 py-1 text-xs font-medium", styles[status])}>
+      {labels[status]}
     </span>
   );
 }
