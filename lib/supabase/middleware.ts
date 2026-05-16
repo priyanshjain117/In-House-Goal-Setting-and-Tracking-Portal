@@ -36,7 +36,8 @@ export async function updateSession(request: NextRequest) {
     data: { user }
   } = await supabase.auth.getUser();
   const pathname = request.nextUrl.pathname;
-  const requiredRole = protectedRoutes[pathname];
+  const protectedRoute = Object.entries(protectedRoutes).find(([route]) => pathname === route || pathname.startsWith(`${route}/`));
+  const requiredRole = protectedRoute?.[1];
 
   if (!user && requiredRole) {
     const urlToLogin = request.nextUrl.clone();

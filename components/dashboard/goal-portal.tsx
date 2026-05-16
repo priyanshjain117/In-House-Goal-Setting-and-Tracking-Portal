@@ -16,6 +16,7 @@ import {
 import { useEffect, useMemo, useState } from "react";
 import { GoalFormDialog } from "@/components/goals/goal-form-dialog";
 import { logoutAction } from "@/app/login/actions";
+import { AchievementTracking } from "@/components/dashboard/achievement-tracking";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -24,18 +25,21 @@ import { Textarea } from "@/components/ui/textarea";
 import { Toast, ToastDescription, ToastProvider, ToastTitle, ToastViewport } from "@/components/ui/toast";
 import { seedUsers } from "@/lib/data/seed";
 import { MAX_GOALS, isEmployeeEditableStatus, validateGoalSet } from "@/lib/domain/goal-validation";
-import type { AuthProfile, Goal, GoalFormValues, ManagerReview, Role, User } from "@/lib/domain/types";
+import type { AchievementFormValues, AchievementUpdate, AuthProfile, Goal, GoalFormValues, ManagerReview, Role, User } from "@/lib/domain/types";
 import { cn } from "@/lib/utils";
 import {
   createGoal,
   decideEmployeeGoals,
   loadGoals,
   loadReviews,
+  loadAchievements,
   resetWorkspaceData,
+  saveAchievements,
   saveGoals,
   saveReviews,
   submitEmployeeGoals,
-  updateGoal
+  updateGoal,
+  upsertAchievement
 } from "@/lib/services/goal-service";
 import {
   decideSupabaseGoals,
@@ -44,6 +48,7 @@ import {
   loadSupabaseWorkspace,
   submitSupabaseGoals,
   unlockSupabaseGoal,
+  upsertSupabaseAchievement,
   updateSupabaseGoal,
   updateSupabaseGoalFields
 } from "@/lib/services/supabase-goal-service";
@@ -74,6 +79,7 @@ export function GoalPortal({ initialRole = "employee", profile }: GoalPortalProp
   const [users, setUsers] = useState<User[]>(seedUsers);
   const [goals, setGoals] = useState<Goal[]>([]);
   const [reviews, setReviews] = useState<ManagerReview[]>([]);
+  const [achievements, setAchievements] = useState<AchievementUpdate[]>([]);
   const [loaded, setLoaded] = useState(false);
   const [startupError, setStartupError] = useState<string | null>(null);
   const [dialogOpen, setDialogOpen] = useState(false);
@@ -92,15 +98,18 @@ export function GoalPortal({ initialRole = "employee", profile }: GoalPortalProp
           if (!isMounted) return;
           setGoals(workspace.goals);
           setReviews(workspace.reviews);
+          setAchievements(workspace.achievements);
           setUsers(workspace.users);
         } else {
           setGoals(loadGoals());
           setReviews(loadReviews());
+          setAchievements(loadAchievements());
         }
       } catch (error) {
         if (!isMounted) return;
         setGoals([]);
         setReviews([]);
+        setAchievements([]);
         setStartupError(error instanceof Error ? error.message : "Unable to load workspace data.");
       } finally {
         if (isMounted) setLoaded(true);
@@ -142,6 +151,7 @@ export function GoalPortal({ initialRole = "employee", profile }: GoalPortalProp
       resetWorkspaceData();
       setGoals(loadGoals());
       setReviews(loadReviews());
+      setAchievements(loadAchievements());
       setStartupError(null);
       notify("Workspace reset", "Demo data has been restored.");
     } catch (error) {
@@ -216,6 +226,28 @@ export function GoalPortal({ initialRole = "employee", profile }: GoalPortalProp
       notify("Submitted for approval", "Your manager can now review these goals.");
     } catch (error) {
       notify("Submit failed", error instanceof Error ? error.message : "Please try again.");
+    }
+  }
+
+  async function saveAchievement(goal: Goal, values: AchievementFormValues) {
+    try {
+      if (useSupabase) {
+        const savedAchievement = await upsertSupabaseAchievement(goal, values);
+        setAchievements((currentAchievements) => {
+          const exists = currentAchievements.some((achievement) => achievement.id === savedAchievement.id);
+          return exists
+            ? currentAchievements.map((achievement) => (achievement.id === savedAchievement.id ? savedAchievement : achievement))
+            : [...currentAchievements, savedAchievement];
+        });
+      } else {
+        const nextAchievements = upsertAchievement(achievements, goal, values);
+        setAchievements(nextAchievements);
+        saveAchievements(nextAchievements);
+      }
+
+      notify("Quarterly update saved", "Progress tracking has been updated.");
+    } catch (error) {
+      notify("Update failed", error instanceof Error ? error.message : "Please try again.");
     }
   }
 
@@ -333,6 +365,14 @@ export function GoalPortal({ initialRole = "employee", profile }: GoalPortalProp
             {role === "admin" ? (
               <AdminDashboard goals={goals} users={users} reviews={reviews} setGoals={useSupabase ? setGoals : persist} notify={notify} useSupabase={useSupabase} />
             ) : null}
+            <AchievementTracking
+              role={role}
+              currentUser={currentUser}
+              users={users}
+              goals={goals}
+              achievements={achievements}
+              onSave={saveAchievement}
+            />
           </section>
         </main>
       </div>
@@ -566,11 +606,12 @@ function ManagerDashboard({
 }) {
   const submittedOwners = useMemo(() => {
     const ownerIds = new Set(goals.filter((goal) => goal.status === "submitted").map((goal) => goal.ownerId));
-    return users.filter((user) => ownerIds.has(user.id));
-  }, [goals, users]);
+    return users.filter((user) => ownerIds.has(user.id) && user.managerId === currentUser.id);
+  }, [currentUser.id, goals, users]);
   const [comment, setComment] = useState("Looks aligned to the quarter priorities.");
 
   async function updateInline(goalId: string, patch: Partial<Pick<Goal, "target" | "weightage">>) {
+    const previousGoals = goals;
     const optimisticGoals = goals.map((goal) => (goal.id === goalId ? { ...goal, ...patch, updatedAt: new Date().toISOString() } : goal));
     setGoals(optimisticGoals);
 
@@ -580,6 +621,7 @@ function ManagerDashboard({
       const updatedGoal = await updateSupabaseGoalFields(goalId, patch);
       setGoals(optimisticGoals.map((goal) => (goal.id === updatedGoal.id ? updatedGoal : goal)));
     } catch (error) {
+      setGoals(previousGoals);
       notify("Update failed", error instanceof Error ? error.message : "Please try again.");
     }
   }

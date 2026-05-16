@@ -1,10 +1,12 @@
 "use client";
 
-import { seedGoals, seedReviews } from "@/lib/data/seed";
-import type { Goal, GoalFormValues, ManagerReview } from "@/lib/domain/types";
+import { seedAchievements, seedGoals, seedReviews } from "@/lib/data/seed";
+import { calculateProgressPercent } from "@/lib/domain/progress";
+import type { AchievementFormValues, AchievementUpdate, Goal, GoalFormValues, ManagerReview } from "@/lib/domain/types";
 
 const GOALS_KEY = "goal_portal_goals";
 const REVIEWS_KEY = "goal_portal_reviews";
+const ACHIEVEMENTS_KEY = "goal_portal_achievements";
 
 function now() {
   return new Date().toISOString();
@@ -41,6 +43,7 @@ export function resetWorkspaceData() {
   if (typeof window === "undefined") return;
   safeSetJson(GOALS_KEY, seedGoals);
   safeSetJson(REVIEWS_KEY, seedReviews);
+  safeSetJson(ACHIEVEMENTS_KEY, seedAchievements);
 }
 
 export function loadGoals(): Goal[] {
@@ -57,6 +60,14 @@ export function loadReviews(): ManagerReview[] {
 
 export function saveReviews(reviews: ManagerReview[]) {
   writeJson(REVIEWS_KEY, reviews);
+}
+
+export function loadAchievements(): AchievementUpdate[] {
+  return readJson(ACHIEVEMENTS_KEY, seedAchievements);
+}
+
+export function saveAchievements(achievements: AchievementUpdate[]) {
+  writeJson(ACHIEVEMENTS_KEY, achievements);
 }
 
 export function createGoal(ownerId: string, values: GoalFormValues): Goal {
@@ -118,4 +129,23 @@ export function decideEmployeeGoals(
     }));
 
   return { updatedGoals, updatedReviews: [...reviews, ...newReviews] };
+}
+
+export function upsertAchievement(achievements: AchievementUpdate[], goal: Goal, values: AchievementFormValues) {
+  const existing = achievements.find((achievement) => achievement.goalId === goal.id && achievement.quarter === values.quarter);
+  const updatedAchievement: AchievementUpdate = {
+    id: existing?.id ?? `a_${crypto.randomUUID()}`,
+    goalId: goal.id,
+    employeeId: goal.ownerId,
+    ...values,
+    progressPercent: calculateProgressPercent(goal, values.actualValue, values.status),
+    createdAt: existing?.createdAt ?? now(),
+    updatedAt: now()
+  };
+
+  if (existing) {
+    return achievements.map((achievement) => (achievement.id === existing.id ? updatedAchievement : achievement));
+  }
+
+  return [...achievements, updatedAchievement];
 }

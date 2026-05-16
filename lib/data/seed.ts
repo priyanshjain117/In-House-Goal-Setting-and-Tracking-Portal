@@ -1,4 +1,4 @@
-import type { Goal, ManagerReview, User } from "@/lib/domain/types";
+import type { AchievementUpdate, Goal, ManagerReview, User } from "@/lib/domain/types";
 
 export const seedUsers: User[] = [
   {
@@ -116,3 +116,5 @@ export const seedGoals: Goal[] = [
 ];
 
 export const seedReviews: ManagerReview[] = [];
+
+export const seedAchievements: AchievementUpdate[] = [];

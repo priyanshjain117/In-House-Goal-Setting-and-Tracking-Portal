@@ -1,6 +1,20 @@
 "use client";
 
-import type { Goal, GoalFormValues, GoalStatus, GoalType, GoalUom, ManagerReview, Role, User } from "@/lib/domain/types";
+import { calculateProgressPercent } from "@/lib/domain/progress";
+import type {
+  AchievementFormValues,
+  AchievementUpdate,
+  Goal,
+  GoalFormValues,
+  GoalProgressStatus,
+  GoalStatus,
+  GoalType,
+  GoalUom,
+  ManagerReview,
+  Quarter,
+  Role,
+  User
+} from "@/lib/domain/types";
 import { createClient } from "@/lib/supabase/client";
 
 type GoalRow = {
@@ -37,6 +51,20 @@ type ReviewRow = {
   action: "approved" | "rejected";
   comment: string | null;
   created_at: string;
+};
+
+type AchievementRow = {
+  id: string;
+  goal_id: string;
+  employee_id: string;
+  quarter: Quarter;
+  actual_value: string;
+  status: GoalProgressStatus;
+  employee_comment: string | null;
+  manager_comment: string | null;
+  progress_percent: number | string;
+  created_at: string;
+  updated_at: string;
 };
 
 function toGoal(row: GoalRow): Goal {
@@ -81,23 +109,47 @@ function toReview(row: ReviewRow): ManagerReview {
   };
 }
 
+function toAchievement(row: AchievementRow): AchievementUpdate {
+  return {
+    id: row.id,
+    goalId: row.goal_id,
+    employeeId: row.employee_id,
+    quarter: row.quarter,
+    actualValue: row.actual_value,
+    status: row.status,
+    employeeComment: row.employee_comment ?? "",
+    managerComment: row.manager_comment ?? "",
+    progressPercent: Number(row.progress_percent),
+    createdAt: row.created_at,
+    updatedAt: row.updated_at
+  };
+}
+
 export async function loadSupabaseWorkspace() {
   const supabase = createClient();
-  const [{ data: goalRows, error: goalsError }, { data: userRows, error: usersError }, { data: reviewRows, error: reviewsError }] =
+  const [
+    { data: goalRows, error: goalsError },
+    { data: userRows, error: usersError },
+    { data: reviewRows, error: reviewsError },
+    { data: achievementRows, error: achievementsError }
+  ] =
     await Promise.all([
       supabase.from("goals").select("*").order("created_at", { ascending: true }),
       supabase.from("users").select("id, name, email, role, manager_id, created_at").order("created_at"),
-      supabase.from("manager_reviews").select("*").order("created_at", { ascending: true })
+      supabase.from("manager_reviews").select("*").order("created_at", { ascending: true }),
+      supabase.from("achievement_updates").select("*").order("updated_at", { ascending: false })
     ]);
 
   if (goalsError) throw new Error(goalsError.message);
   if (usersError) throw new Error(usersError.message);
   if (reviewsError) throw new Error(reviewsError.message);
+  if (achievementsError) throw new Error(achievementsError.message);
 
   return {
     goals: (goalRows ?? []).map((row) => toGoal(row as GoalRow)),
     users: (userRows ?? []).map((row) => toUser(row as UserRow)),
-    reviews: (reviewRows ?? []).map((row) => toReview(row as ReviewRow))
+    reviews: (reviewRows ?? []).map((row) => toReview(row as ReviewRow)),
+    achievements: (achievementRows ?? []).map((row) => toAchievement(row as AchievementRow))
   };
 }
 
@@ -219,4 +271,29 @@ export async function unlockSupabaseGoal(goalId: string) {
 
   if (error) throw new Error(error.message);
   return toGoal(data as GoalRow);
+}
+
+export async function upsertSupabaseAchievement(goal: Goal, values: AchievementFormValues) {
+  const supabase = createClient();
+  const progressPercent = calculateProgressPercent(goal, values.actualValue, values.status);
+  const { data, error } = await supabase
+    .from("achievement_updates")
+    .upsert(
+      {
+        goal_id: goal.id,
+        employee_id: goal.ownerId,
+        quarter: values.quarter,
+        actual_value: values.actualValue,
+        status: values.status,
+        employee_comment: values.employeeComment,
+        manager_comment: values.managerComment,
+        progress_percent: progressPercent
+      },
+      { onConflict: "goal_id,quarter" }
+    )
+    .select("*")
+    .single();
+
+  if (error) throw new Error(error.message);
+  return toAchievement(data as AchievementRow);
 }

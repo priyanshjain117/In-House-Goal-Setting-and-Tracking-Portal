@@ -20,6 +20,16 @@ do $$ begin
 exception when duplicate_object then null;
 end $$;
 
+do $$ begin
+  create type public.progress_status as enum ('not_started', 'on_track', 'completed');
+exception when duplicate_object then null;
+end $$;
+
+do $$ begin
+  create type public.goal_quarter as enum ('Q1', 'Q2', 'Q3', 'Q4');
+exception when duplicate_object then null;
+end $$;
+
 create table if not exists public.users (
   id uuid primary key references auth.users(id) on delete cascade,
   name text not null,
@@ -49,6 +59,20 @@ create table if not exists public.goals (
   constraint submitted_or_terminal_status check (status in ('draft', 'submitted', 'approved', 'rejected'))
 );
 
+do $$
+begin
+  if not exists (
+    select 1
+    from pg_constraint
+    where conname = 'goals_uom_allowed'
+      and conrelid = 'public.goals'::regclass
+  ) then
+    alter table public.goals
+      add constraint goals_uom_allowed
+      check (uom in ('numeric', 'percentage', 'timeline', 'zero_based'));
+  end if;
+end $$;
+
 create table if not exists public.manager_reviews (
   id uuid primary key default gen_random_uuid(),
   goal_id uuid not null references public.goals(id) on delete cascade,
@@ -58,11 +82,59 @@ create table if not exists public.manager_reviews (
   created_at timestamptz not null default now()
 );
 
+create table if not exists public.achievement_updates (
+  id uuid primary key default gen_random_uuid(),
+  goal_id uuid not null references public.goals(id) on delete cascade,
+  employee_id uuid not null references public.users(id) on delete cascade,
+  quarter public.goal_quarter not null,
+  actual_value text not null default '',
+  status public.progress_status not null default 'not_started',
+  employee_comment text,
+  manager_comment text,
+  progress_percent numeric(5,2) not null default 0 check (progress_percent >= 0 and progress_percent <= 100),
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  unique (goal_id, quarter)
+);
+
+create table if not exists public.quarterly_reviews (
+  id uuid primary key default gen_random_uuid(),
+  employee_id uuid not null references public.users(id) on delete cascade,
+  manager_id uuid references public.users(id) on delete set null,
+  quarter public.goal_quarter not null,
+  summary text,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  unique (employee_id, quarter)
+);
+
+create table if not exists public.check_ins (
+  id uuid primary key default gen_random_uuid(),
+  achievement_id uuid not null references public.achievement_updates(id) on delete cascade,
+  actor_id uuid not null references public.users(id) on delete cascade,
+  comment text not null,
+  created_at timestamptz not null default now()
+);
+
+create table if not exists public.progress_snapshots (
+  id uuid primary key default gen_random_uuid(),
+  goal_id uuid not null references public.goals(id) on delete cascade,
+  quarter public.goal_quarter not null,
+  progress_percent numeric(5,2) not null check (progress_percent >= 0 and progress_percent <= 100),
+  status public.progress_status not null,
+  captured_at timestamptz not null default now()
+);
+
 create index if not exists users_manager_id_idx on public.users(manager_id);
 create index if not exists goals_employee_status_idx on public.goals(employee_id, status);
 create index if not exists goals_created_at_idx on public.goals(created_at);
 create index if not exists manager_reviews_goal_id_idx on public.manager_reviews(goal_id);
 create index if not exists manager_reviews_manager_id_idx on public.manager_reviews(manager_id);
+create index if not exists achievement_updates_employee_quarter_idx on public.achievement_updates(employee_id, quarter);
+create index if not exists achievement_updates_goal_quarter_idx on public.achievement_updates(goal_id, quarter);
+create index if not exists quarterly_reviews_employee_quarter_idx on public.quarterly_reviews(employee_id, quarter);
+create index if not exists check_ins_achievement_id_idx on public.check_ins(achievement_id);
+create index if not exists progress_snapshots_goal_quarter_idx on public.progress_snapshots(goal_id, quarter);
 
 create or replace function public.set_updated_at()
 returns trigger
@@ -77,6 +149,16 @@ $$;
 drop trigger if exists set_goals_updated_at on public.goals;
 create trigger set_goals_updated_at
 before update on public.goals
+for each row execute function public.set_updated_at();
+
+drop trigger if exists set_achievement_updates_updated_at on public.achievement_updates;
+create trigger set_achievement_updates_updated_at
+before update on public.achievement_updates
+for each row execute function public.set_updated_at();
+
+drop trigger if exists set_quarterly_reviews_updated_at on public.quarterly_reviews;
+create trigger set_quarterly_reviews_updated_at
+before update on public.quarterly_reviews
 for each row execute function public.set_updated_at();
 
 create or replace function public.create_profile_for_auth_user()
@@ -146,6 +228,10 @@ for each row execute function public.prevent_locked_goal_edits();
 alter table public.users enable row level security;
 alter table public.goals enable row level security;
 alter table public.manager_reviews enable row level security;
+alter table public.achievement_updates enable row level security;
+alter table public.quarterly_reviews enable row level security;
+alter table public.check_ins enable row level security;
+alter table public.progress_snapshots enable row level security;
 
 drop policy if exists "Users can read self team and admin profiles" on public.users;
 create policy "Users can read self team and admin profiles"
@@ -277,5 +363,110 @@ on public.manager_reviews for all
 to authenticated
 using (public.current_user_role() = 'admin')
 with check (public.current_user_role() = 'admin');
+
+drop policy if exists "Employees view own achievement updates" on public.achievement_updates;
+create policy "Employees view own achievement updates"
+on public.achievement_updates for select
+to authenticated
+using (employee_id = auth.uid());
+
+drop policy if exists "Employees update own approved achievement updates" on public.achievement_updates;
+create policy "Employees update own approved achievement updates"
+on public.achievement_updates for all
+to authenticated
+using (
+  employee_id = auth.uid()
+  and exists (
+    select 1 from public.goals goal
+    where goal.id = achievement_updates.goal_id
+      and goal.status = 'approved'
+  )
+)
+with check (
+  employee_id = auth.uid()
+  and exists (
+    select 1 from public.goals goal
+    where goal.id = achievement_updates.goal_id
+      and goal.status = 'approved'
+  )
+);
+
+drop policy if exists "Managers view and comment on team achievements" on public.achievement_updates;
+create policy "Managers view and comment on team achievements"
+on public.achievement_updates for all
+to authenticated
+using (
+  exists (
+    select 1
+    from public.users employee
+    where employee.id = achievement_updates.employee_id
+      and employee.manager_id = auth.uid()
+  )
+)
+with check (
+  exists (
+    select 1
+    from public.users employee
+    where employee.id = achievement_updates.employee_id
+      and employee.manager_id = auth.uid()
+  )
+);
+
+drop policy if exists "Admins access all achievement updates" on public.achievement_updates;
+create policy "Admins access all achievement updates"
+on public.achievement_updates for all
+to authenticated
+using (public.current_user_role() = 'admin')
+with check (public.current_user_role() = 'admin');
+
+drop policy if exists "Quarterly reviews visible to owners managers admins" on public.quarterly_reviews;
+create policy "Quarterly reviews visible to owners managers admins"
+on public.quarterly_reviews for all
+to authenticated
+using (
+  employee_id = auth.uid()
+  or manager_id = auth.uid()
+  or public.current_user_role() = 'admin'
+)
+with check (
+  employee_id = auth.uid()
+  or manager_id = auth.uid()
+  or public.current_user_role() = 'admin'
+);
+
+drop policy if exists "Check ins visible to related users" on public.check_ins;
+create policy "Check ins visible to related users"
+on public.check_ins for all
+to authenticated
+using (
+  actor_id = auth.uid()
+  or public.current_user_role() = 'admin'
+  or exists (
+    select 1
+    from public.achievement_updates update_row
+    join public.users employee on employee.id = update_row.employee_id
+    where update_row.id = check_ins.achievement_id
+      and (employee.id = auth.uid() or employee.manager_id = auth.uid())
+  )
+)
+with check (
+  actor_id = auth.uid()
+  or public.current_user_role() = 'admin'
+);
+
+drop policy if exists "Progress snapshots visible to related users" on public.progress_snapshots;
+create policy "Progress snapshots visible to related users"
+on public.progress_snapshots for select
+to authenticated
+using (
+  public.current_user_role() = 'admin'
+  or exists (
+    select 1
+    from public.goals goal
+    join public.users employee on employee.id = goal.employee_id
+    where goal.id = progress_snapshots.goal_id
+      and (employee.id = auth.uid() or employee.manager_id = auth.uid())
+  )
+);
 
 notify pgrst, 'reload schema';

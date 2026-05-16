@@ -3,6 +3,8 @@ export type Role = "employee" | "manager" | "admin";
 export type GoalStatus = "draft" | "submitted" | "approved" | "rejected";
 export type GoalUom = "numeric" | "percentage" | "timeline" | "zero_based";
 export type GoalType = "min" | "max";
+export type GoalProgressStatus = "not_started" | "on_track" | "completed";
+export type Quarter = "Q1" | "Q2" | "Q3" | "Q4";
 
 export interface User {
   id: string;
@@ -58,4 +60,26 @@ export interface GoalFormValues {
   goalType: GoalType;
   target: string;
   weightage: number;
+}
+
+export interface AchievementUpdate {
+  id: string;
+  goalId: string;
+  employeeId: string;
+  quarter: Quarter;
+  actualValue: string;
+  status: GoalProgressStatus;
+  employeeComment: string;
+  managerComment: string;
+  progressPercent: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface AchievementFormValues {
+  quarter: Quarter;
+  actualValue: string;
+  status: GoalProgressStatus;
+  employeeComment: string;
+  managerComment: string;
 }
