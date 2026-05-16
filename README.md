@@ -1,6 +1,6 @@
 # GoalOS: Goal Setting & Tracking Portal
 
-Phase 1 hackathon-ready MVP for enterprise goal creation, manager approval, and admin unlock workflows.
+Hackathon-ready enterprise goal creation, manager approval, admin unlock, and Supabase Auth workflows.
 
 ## Stack
 
@@ -8,13 +8,13 @@ Phase 1 hackathon-ready MVP for enterprise goal creation, manager approval, and 
 - TypeScript
 - Tailwind CSS
 - shadcn/ui-style Radix primitives
-- Supabase schema in `supabase/schema.sql`
-- Mock role switching for Employee, Manager, and Admin
+- Supabase Auth, Postgres, RLS, and middleware route protection
 
 ## Run Locally
 
 ```bash
 npm install
+cp .env.example .env.local
 npm run dev
 ```
 
@@ -23,36 +23,65 @@ Open `http://localhost:3000`.
 ## Supabase Setup
 
 1. Create a Supabase project.
-2. Open SQL Editor.
-3. Run `supabase/schema.sql`.
-4. Add these environment variables when replacing mock storage with Supabase queries:
+2. In Supabase SQL Editor, run the full contents of `supabase/schema.sql`.
+3. Keep these values configured in `.env` or `.env.local`:
 
 ```bash
-NEXT_PUBLIC_SUPABASE_URL=...
+NEXT_PUBLIC_SUPABASE_URL=https://your-project-ref.supabase.co
 NEXT_PUBLIC_SUPABASE_ANON_KEY=...
+SUPABASE_SERVICE_ROLE_KEY=...
 ```
 
-## Folder Structure
+`SUPABASE_SERVICE_ROLE_KEY` is only used server-side by the login page setup button to create demo Auth users. Do not expose it with a `NEXT_PUBLIC_` prefix.
+
+4. Seed demo Auth users and role rows:
+
+```bash
+npm run db:seed
+```
+
+You can also click **Create demo accounts** on `/login`; both paths use the same existing env values and do not modify env files.
+
+5. Start the app and open `/login`.
+6. Sign in with:
 
 ```txt
-app/                      App Router shell and page entry
-components/ui/            Reusable shadcn/ui-style primitives
-components/dashboard/     Role dashboards, tables, badges
-components/goals/         Goal form dialog
-lib/domain/               Types and reusable validation logic
-lib/data/                 Seed users and goals
-lib/services/             Mock persistence and Supabase client boundary
-supabase/schema.sql       Scalable Phase 1 database schema
+Employee: employee@demo.com / Employee123
+Manager:  manager@demo.com  / Manager123
+Admin/HR: admin@demo.com    / Admin123
 ```
 
-## Phase 1 Workflow
+After login, users are redirected by role:
 
-- Employee creates, edits, and deletes draft goals.
-- Live validation enforces max 8 goals, minimum 10% per goal, and exactly 100% total weightage.
-- Employee submits valid goals for manager approval.
-- Manager reviews submitted employee goals, inline edits target and weightage, adds comments, then approves or rejects.
-- Approved goals become locked.
-- Admin views all users/goals and can unlock approved goals back to draft for employee edits.
+- Employee: `/employee`
+- Manager: `/manager`
+- Admin/HR: `/admin`
 
-The UI currently persists data in `localStorage` so the full workflow works without auth or backend setup. The Supabase schema is ready for wiring in server actions or route handlers in the next phase.
-# In-House-Goal-Setting-and-Tracking-Portal
+## Auth Architecture
+
+- `middleware.ts` refreshes Supabase sessions and protects `/employee`, `/manager`, and `/admin`.
+- `lib/supabase/client.ts` is for client components.
+- `lib/supabase/server.ts` is for server components and actions.
+- `lib/auth.ts` centralizes profile loading and role redirects.
+- `app/login/actions.ts` handles login, logout, and demo account creation.
+- Roles live in `public.users.role` and are enforced with RLS policies.
+
+## Schema Cache Fix
+
+If Supabase returns `Could not find the table 'public.users' in the schema cache`, run `supabase/schema.sql` in the SQL Editor again. The schema ends with:
+
+```sql
+notify pgrst, 'reload schema';
+```
+
+Then run `npm run db:seed` once so the demo Auth users and `public.users` rows exist together.
+
+## Goal Workflow
+
+- Employees create, edit, delete, and submit goals.
+- Goal edit uses controlled form state and Supabase `update` by goal id.
+- Goal type supports stable `min` / `max` enum handling.
+- Validation enforces max 8 goals, minimum 10% per goal, and exactly 100% total weightage before submission.
+- Managers can review submitted goals and approve or reject them.
+- Approved goals are locked.
+- Admin/HR can unlock goals back to draft.

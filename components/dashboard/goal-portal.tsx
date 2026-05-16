@@ -7,22 +7,24 @@ import {
   ClipboardList,
   FileLock2,
   LayoutDashboard,
+  Loader2,
+  LogOut,
   Plus,
   ShieldCheck,
   Users
 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { GoalFormDialog } from "@/components/goals/goal-form-dialog";
+import { logoutAction } from "@/app/login/actions";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Progress } from "@/components/ui/progress";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import { Toast, ToastDescription, ToastProvider, ToastTitle, ToastViewport } from "@/components/ui/toast";
 import { seedUsers } from "@/lib/data/seed";
 import { MAX_GOALS, isEmployeeEditableStatus, validateGoalSet } from "@/lib/domain/goal-validation";
-import type { Goal, GoalFormValues, ManagerReview, Role, User } from "@/lib/domain/types";
+import type { AuthProfile, Goal, GoalFormValues, ManagerReview, Role, User } from "@/lib/domain/types";
 import { cn } from "@/lib/utils";
 import {
   createGoal,
@@ -35,6 +37,16 @@ import {
   submitEmployeeGoals,
   updateGoal
 } from "@/lib/services/goal-service";
+import {
+  decideSupabaseGoals,
+  deleteSupabaseGoal,
+  insertSupabaseGoal,
+  loadSupabaseWorkspace,
+  submitSupabaseGoals,
+  unlockSupabaseGoal,
+  updateSupabaseGoal,
+  updateSupabaseGoalFields
+} from "@/lib/services/supabase-goal-service";
 import { StatusBadge } from "./status-badge";
 
 const roleCopy: Record<Role, { title: string; subtitle: string }> = {
@@ -52,31 +64,62 @@ const roleCopy: Record<Role, { title: string; subtitle: string }> = {
   }
 };
 
-export function GoalPortal() {
-  const [role, setRole] = useState<Role>("employee");
+type GoalPortalProps = {
+  initialRole?: Role;
+  profile?: AuthProfile;
+};
+
+export function GoalPortal({ initialRole = "employee", profile }: GoalPortalProps) {
+  const [role] = useState<Role>(initialRole);
+  const [users, setUsers] = useState<User[]>(seedUsers);
   const [goals, setGoals] = useState<Goal[]>([]);
   const [reviews, setReviews] = useState<ManagerReview[]>([]);
   const [loaded, setLoaded] = useState(false);
   const [startupError, setStartupError] = useState<string | null>(null);
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editingGoal, setEditingGoal] = useState<Goal | null>(null);
+  const [savingGoal, setSavingGoal] = useState(false);
   const [toast, setToast] = useState<{ title: string; description: string } | null>(null);
+  const useSupabase = Boolean(profile);
 
   useEffect(() => {
-    try {
-      setGoals(loadGoals());
-      setReviews(loadReviews());
-    } catch (error) {
-      setGoals([]);
-      setReviews([]);
-      setStartupError(error instanceof Error ? error.message : "Unable to load workspace data.");
-    } finally {
-      setLoaded(true);
-    }
-  }, []);
+    let isMounted = true;
 
-  const currentUser = seedUsers.find((user) => user.role === role) as User;
-  const employee = seedUsers.find((user) => user.id === "u_employee") as User;
+    async function loadWorkspace() {
+      try {
+        if (useSupabase) {
+          const workspace = await loadSupabaseWorkspace();
+          if (!isMounted) return;
+          setGoals(workspace.goals);
+          setReviews(workspace.reviews);
+          setUsers(workspace.users);
+        } else {
+          setGoals(loadGoals());
+          setReviews(loadReviews());
+        }
+      } catch (error) {
+        if (!isMounted) return;
+        setGoals([]);
+        setReviews([]);
+        setStartupError(error instanceof Error ? error.message : "Unable to load workspace data.");
+      } finally {
+        if (isMounted) setLoaded(true);
+      }
+    }
+
+    loadWorkspace();
+
+    return () => {
+      isMounted = false;
+    };
+  }, [useSupabase]);
+
+  const currentUser: User =
+    profile ??
+    (users.find((user) => user.role === role) as User) ??
+    (seedUsers.find((user) => user.role === role) as User);
+  const employee =
+    role === "employee" ? currentUser : users.find((user) => user.role === "employee") ?? (seedUsers.find((user) => user.role === "employee") as User);
   const employeeGoals = goals.filter((goal) => goal.ownerId === employee.id);
   const validation = validateGoalSet(employeeGoals);
   const visibleMetricGoals = role === "employee" ? employeeGoals : goals;
@@ -106,34 +149,83 @@ export function GoalPortal() {
     }
   }
 
-  function saveGoal(values: GoalFormValues) {
-    if (editingGoal) {
-      persist(goals.map((goal) => (goal.id === editingGoal.id ? updateGoal(goal, values) : goal)));
-      notify("Goal updated", "The draft goal has been saved.");
-      return;
+  async function saveGoal(values: GoalFormValues) {
+    if (savingGoal) return false;
+    setSavingGoal(true);
+
+    try {
+      if (editingGoal) {
+        if (useSupabase) {
+          const updatedGoal = await updateSupabaseGoal(editingGoal.id, values);
+          setGoals((currentGoals) => currentGoals.map((goal) => (goal.id === updatedGoal.id ? updatedGoal : goal)));
+        } else {
+          persist(goals.map((goal) => (goal.id === editingGoal.id ? updateGoal(goal, values) : goal)));
+        }
+        setDialogOpen(false);
+        setEditingGoal(null);
+        notify("Goal updated", "The draft goal has been saved.");
+        return true;
+      }
+
+      if (employeeGoals.length >= MAX_GOALS) {
+        notify("Goal limit reached", `Employees can create up to ${MAX_GOALS} goals.`);
+        return false;
+      }
+
+      if (useSupabase) {
+        const newGoal = await insertSupabaseGoal(employee.id, values);
+        setGoals((currentGoals) => [...currentGoals, newGoal]);
+      } else {
+        persist([...goals, createGoal(employee.id, values)]);
+      }
+      setDialogOpen(false);
+      notify("Goal created", "The new goal is ready in draft.");
+      return true;
+    } catch (error) {
+      notify("Unable to save goal", error instanceof Error ? error.message : "Please try again.");
+      return false;
+    } finally {
+      setSavingGoal(false);
     }
-    if (employeeGoals.length >= MAX_GOALS) {
-      notify("Goal limit reached", `Employees can create up to ${MAX_GOALS} goals.`);
-      return;
-    }
-    persist([...goals, createGoal(employee.id, values)]);
-    notify("Goal created", "The new goal is ready in draft.");
   }
 
-  function removeGoal(goalId: string) {
-    persist(goals.filter((goal) => goal.id !== goalId));
-    notify("Goal deleted", "The draft goal was removed.");
+  async function removeGoal(goalId: string) {
+    try {
+      if (useSupabase) {
+        await deleteSupabaseGoal(goalId);
+        setGoals((currentGoals) => currentGoals.filter((goal) => goal.id !== goalId));
+      } else {
+        persist(goals.filter((goal) => goal.id !== goalId));
+      }
+      notify("Goal deleted", "The draft goal was removed.");
+    } catch (error) {
+      notify("Delete failed", error instanceof Error ? error.message : "Please try again.");
+    }
   }
 
-  function submitGoals() {
-    persist(submitEmployeeGoals(goals, employee.id));
-    notify("Submitted for approval", "Your manager can now review these goals.");
+  async function submitGoals() {
+    try {
+      if (useSupabase) {
+        const submittedGoals = await submitSupabaseGoals(employee.id);
+        setGoals((currentGoals) =>
+          currentGoals.map((goal) => submittedGoals.find((submittedGoal) => submittedGoal.id === goal.id) ?? goal)
+        );
+      } else {
+        persist(submitEmployeeGoals(goals, employee.id));
+      }
+      notify("Submitted for approval", "Your manager can now review these goals.");
+    } catch (error) {
+      notify("Submit failed", error instanceof Error ? error.message : "Please try again.");
+    }
   }
 
   if (!loaded) {
     return (
       <div className="flex min-h-screen items-center justify-center bg-background">
-        <div className="rounded-xl border bg-card px-5 py-4 text-sm shadow-soft">Loading workspace...</div>
+        <div className="flex items-center gap-3 rounded-xl border bg-card px-5 py-4 text-sm shadow-soft">
+          <Loader2 className="h-4 w-4 animate-spin" />
+          Loading workspace...
+        </div>
       </div>
     );
   }
@@ -178,18 +270,18 @@ export function GoalPortal() {
                 <p className="text-sm text-muted-foreground">{roleCopy[role].subtitle}</p>
               </div>
               <div className="flex items-center gap-3">
-                <Select value={role} onValueChange={(value: Role) => setRole(value)}>
-              <SelectTrigger className="w-40"><SelectValue /></SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="employee">Employee</SelectItem>
-                    <SelectItem value="manager">Manager</SelectItem>
-                    <SelectItem value="admin">Admin</SelectItem>
-                  </SelectContent>
-                </Select>
                 <div className="hidden text-right text-sm sm:block">
                   <p className="font-medium">{currentUser.name}</p>
-                  <p className="text-xs text-muted-foreground">{currentUser.title}</p>
+                  <p className="text-xs capitalize text-muted-foreground">{currentUser.role === "admin" ? "Admin/HR" : currentUser.role}</p>
                 </div>
+                {profile ? (
+                  <form action={logoutAction}>
+                    <Button type="submit" variant="outline">
+                      <LogOut className="h-4 w-4" />
+                      Logout
+                    </Button>
+                  </form>
+                ) : null}
               </div>
             </div>
           </header>
@@ -227,14 +319,25 @@ export function GoalPortal() {
               />
             ) : null}
             {role === "manager" ? (
-              <ManagerDashboard goals={goals} setGoals={persist} reviews={reviews} setReviews={setReviews} notify={notify} />
+              <ManagerDashboard
+                goals={goals}
+                users={users}
+                currentUser={currentUser}
+                setGoals={useSupabase ? setGoals : persist}
+                reviews={reviews}
+                setReviews={setReviews}
+                notify={notify}
+                useSupabase={useSupabase}
+              />
             ) : null}
-            {role === "admin" ? <AdminDashboard goals={goals} reviews={reviews} setGoals={persist} notify={notify} /> : null}
+            {role === "admin" ? (
+              <AdminDashboard goals={goals} users={users} reviews={reviews} setGoals={useSupabase ? setGoals : persist} notify={notify} useSupabase={useSupabase} />
+            ) : null}
           </section>
         </main>
       </div>
 
-      <GoalFormDialog open={dialogOpen} goal={editingGoal} onOpenChange={setDialogOpen} onSubmit={saveGoal} />
+      <GoalFormDialog open={dialogOpen} goal={editingGoal} isSaving={savingGoal} onOpenChange={setDialogOpen} onSubmit={saveGoal} />
       {toast ? (
         <Toast open onOpenChange={(open) => !open && setToast(null)}>
           <ToastTitle className="font-semibold">{toast.title}</ToastTitle>
@@ -403,7 +506,14 @@ function GoalTable({
                   ) : null}
                 </td>
                 <td className="py-4 pr-4 capitalize">{goal.uom.replace("_", " ")}</td>
-                <td className="py-4 pr-4">{goal.target}</td>
+                <td className="py-4 pr-4">
+                  <div className="flex flex-col gap-1">
+                    <span>{goal.target}</span>
+                    <span className="w-fit rounded-md bg-muted px-2 py-0.5 text-[11px] font-medium uppercase text-muted-foreground">
+                      {goal.goalType}
+                    </span>
+                  </div>
+                </td>
                 <td className="py-4 pr-4">{goal.weightage}%</td>
                 <td className="py-4 pr-4"><StatusBadge status={goal.status} /></td>
                 <td className="py-4 text-right">
@@ -437,28 +547,44 @@ function GoalTable({
 
 function ManagerDashboard({
   goals,
+  users,
+  currentUser,
   setGoals,
   reviews,
   setReviews,
-  notify
+  notify,
+  useSupabase
 }: {
   goals: Goal[];
+  users: User[];
+  currentUser: User;
   setGoals: (goals: Goal[]) => void;
   reviews: ManagerReview[];
   setReviews: (reviews: ManagerReview[]) => void;
   notify: (title: string, description: string) => void;
+  useSupabase: boolean;
 }) {
   const submittedOwners = useMemo(() => {
     const ownerIds = new Set(goals.filter((goal) => goal.status === "submitted").map((goal) => goal.ownerId));
-    return seedUsers.filter((user) => ownerIds.has(user.id));
-  }, [goals]);
+    return users.filter((user) => ownerIds.has(user.id));
+  }, [goals, users]);
   const [comment, setComment] = useState("Looks aligned to the quarter priorities.");
 
-  function updateInline(goalId: string, patch: Partial<Pick<Goal, "target" | "weightage">>) {
-    setGoals(goals.map((goal) => (goal.id === goalId ? { ...goal, ...patch, updatedAt: new Date().toISOString() } : goal)));
+  async function updateInline(goalId: string, patch: Partial<Pick<Goal, "target" | "weightage">>) {
+    const optimisticGoals = goals.map((goal) => (goal.id === goalId ? { ...goal, ...patch, updatedAt: new Date().toISOString() } : goal));
+    setGoals(optimisticGoals);
+
+    if (!useSupabase) return;
+
+    try {
+      const updatedGoal = await updateSupabaseGoalFields(goalId, patch);
+      setGoals(optimisticGoals.map((goal) => (goal.id === updatedGoal.id ? updatedGoal : goal)));
+    } catch (error) {
+      notify("Update failed", error instanceof Error ? error.message : "Please try again.");
+    }
   }
 
-  function decide(ownerId: string, status: "approved" | "rejected") {
+  async function decide(ownerId: string, status: "approved" | "rejected") {
     const ownerGoals = goals.filter((goal) => goal.ownerId === ownerId && goal.status === "submitted");
     const reviewValidation = validateGoalSet(ownerGoals);
     if (status === "approved" && !reviewValidation.canSubmit) {
@@ -469,11 +595,22 @@ function ManagerDashboard({
       notify("Comment required", "Add a short rework comment before returning goals.");
       return;
     }
-    const result = decideEmployeeGoals(goals, reviews, ownerId, "u_manager", status, comment.trim());
-    setGoals(result.updatedGoals);
-    setReviews(result.updatedReviews);
-    saveReviews(result.updatedReviews);
-    notify(status === "approved" ? "Goals approved" : "Goals rejected", "The employee plan has been updated.");
+    try {
+      if (useSupabase) {
+        const result = await decideSupabaseGoals(ownerId, currentUser.id, status, comment.trim());
+        const decidedGoals = result.goals;
+        setGoals(goals.map((goal) => decidedGoals.find((decidedGoal) => decidedGoal.id === goal.id) ?? goal));
+        setReviews([...reviews, ...result.reviews]);
+      } else {
+        const result = decideEmployeeGoals(goals, reviews, ownerId, "u_manager", status, comment.trim());
+        setGoals(result.updatedGoals);
+        setReviews(result.updatedReviews);
+        saveReviews(result.updatedReviews);
+      }
+      notify(status === "approved" ? "Goals approved" : "Goals rejected", "The employee plan has been updated.");
+    } catch (error) {
+      notify("Review failed", error instanceof Error ? error.message : "Please try again.");
+    }
   }
 
   if (!submittedOwners.length) {
@@ -564,18 +701,31 @@ function ManagerDashboard({
 
 function AdminDashboard({
   goals,
+  users,
   reviews,
   setGoals,
-  notify
+  notify,
+  useSupabase
 }: {
   goals: Goal[];
+  users: User[];
   reviews: ManagerReview[];
   setGoals: (goals: Goal[]) => void;
   notify: (title: string, description: string) => void;
+  useSupabase: boolean;
 }) {
-  function unlock(goalId: string) {
-    setGoals(goals.map((goal) => (goal.id === goalId ? { ...goal, locked: false, status: "draft", updatedAt: new Date().toISOString() } : goal)));
-    notify("Goal unlocked", "The employee can edit and resubmit this goal.");
+  async function unlock(goalId: string) {
+    try {
+      if (useSupabase) {
+        const unlockedGoal = await unlockSupabaseGoal(goalId);
+        setGoals(goals.map((goal) => (goal.id === unlockedGoal.id ? unlockedGoal : goal)));
+      } else {
+        setGoals(goals.map((goal) => (goal.id === goalId ? { ...goal, locked: false, status: "draft", updatedAt: new Date().toISOString() } : goal)));
+      }
+      notify("Goal unlocked", "The employee can edit and resubmit this goal.");
+    } catch (error) {
+      notify("Unlock failed", error instanceof Error ? error.message : "Please try again.");
+    }
   }
 
   return (
@@ -600,7 +750,7 @@ function AdminDashboard({
             </thead>
             <tbody className="divide-y">
               {goals.map((goal) => {
-                const owner = seedUsers.find((user) => user.id === goal.ownerId);
+                const owner = users.find((user) => user.id === goal.ownerId);
                 const latestReview = reviews
                   .filter((review) => review.goalId === goal.id)
                   .sort((a, b) => b.createdAt.localeCompare(a.createdAt))[0];

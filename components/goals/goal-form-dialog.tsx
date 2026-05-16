@@ -2,7 +2,8 @@
 
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useEffect } from "react";
-import { useForm } from "react-hook-form";
+import { Loader2 } from "lucide-react";
+import { Controller, useForm } from "react-hook-form";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
@@ -10,23 +11,38 @@ import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import { emptyGoalForm, goalFormSchema } from "@/lib/domain/goal-validation";
-import type { Goal, GoalFormValues, GoalType, GoalUom } from "@/lib/domain/types";
+import type { Goal, GoalFormValues } from "@/lib/domain/types";
 
 type Props = {
   open: boolean;
   goal?: Goal | null;
+  isSaving?: boolean;
   onOpenChange: (open: boolean) => void;
-  onSubmit: (values: GoalFormValues) => void;
+  onSubmit: (values: GoalFormValues) => Promise<boolean> | boolean;
 };
 
-export function GoalFormDialog({ open, goal, onOpenChange, onSubmit }: Props) {
+export function GoalFormDialog({ open, goal, isSaving = false, onOpenChange, onSubmit }: Props) {
   const form = useForm<GoalFormValues>({
     resolver: zodResolver(goalFormSchema),
     defaultValues: emptyGoalForm()
   });
 
   useEffect(() => {
-    form.reset(goal ? { ...goal } : emptyGoalForm());
+    if (!open) return;
+
+    form.reset(
+      goal
+        ? {
+            thrustArea: goal.thrustArea,
+            title: goal.title,
+            description: goal.description,
+            uom: goal.uom,
+            goalType: goal.goalType,
+            target: goal.target,
+            weightage: Number(goal.weightage)
+          }
+        : emptyGoalForm()
+    );
   }, [form, goal, open]);
 
   return (
@@ -39,9 +55,11 @@ export function GoalFormDialog({ open, goal, onOpenChange, onSubmit }: Props) {
 
         <form
           className="grid gap-4"
-          onSubmit={form.handleSubmit((values) => {
-            onSubmit(values);
-            onOpenChange(false);
+          onSubmit={form.handleSubmit(async (values) => {
+            const saved = await onSubmit(values);
+            if (saved) {
+              form.reset(emptyGoalForm());
+            }
           })}
         >
           <Field label="Thrust Area" error={form.formState.errors.thrustArea?.message}>
@@ -56,47 +74,56 @@ export function GoalFormDialog({ open, goal, onOpenChange, onSubmit }: Props) {
 
           <div className="grid gap-4 sm:grid-cols-2">
             <Field label="UoM" error={form.formState.errors.uom?.message}>
-              <Select
-                value={form.watch("uom")}
-                onValueChange={(value: GoalUom) => form.setValue("uom", value, { shouldValidate: true })}
-              >
-                <SelectTrigger><SelectValue /></SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="numeric">Numeric</SelectItem>
-                  <SelectItem value="percentage">%</SelectItem>
-                  <SelectItem value="timeline">Timeline</SelectItem>
-                  <SelectItem value="zero_based">Zero-based</SelectItem>
-                </SelectContent>
-              </Select>
+              <Controller
+                control={form.control}
+                name="uom"
+                render={({ field }) => (
+                  <Select value={field.value} onValueChange={field.onChange} disabled={isSaving}>
+                    <SelectTrigger><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="numeric">Numeric</SelectItem>
+                      <SelectItem value="percentage">%</SelectItem>
+                      <SelectItem value="timeline">Timeline</SelectItem>
+                      <SelectItem value="zero_based">Zero-based</SelectItem>
+                    </SelectContent>
+                  </Select>
+                )}
+              />
             </Field>
             <Field label="Goal Type" error={form.formState.errors.goalType?.message}>
-              <Select
-                value={form.watch("goalType")}
-                onValueChange={(value: GoalType) => form.setValue("goalType", value, { shouldValidate: true })}
-              >
-                <SelectTrigger><SelectValue /></SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="max">Max</SelectItem>
-                  <SelectItem value="min">Min</SelectItem>
-                </SelectContent>
-              </Select>
+              <Controller
+                control={form.control}
+                name="goalType"
+                render={({ field }) => (
+                  <Select value={field.value} onValueChange={field.onChange} disabled={isSaving}>
+                    <SelectTrigger><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="max">Max</SelectItem>
+                      <SelectItem value="min">Min</SelectItem>
+                    </SelectContent>
+                  </Select>
+                )}
+              />
             </Field>
           </div>
 
           <div className="grid gap-4 sm:grid-cols-2">
             <Field label="Target" error={form.formState.errors.target?.message}>
-              <Input {...form.register("target")} placeholder="95%" />
+              <Input {...form.register("target")} placeholder="95%" disabled={isSaving} />
             </Field>
             <Field label="Weightage" error={form.formState.errors.weightage?.message}>
-              <Input type="number" min={10} max={100} {...form.register("weightage", { valueAsNumber: true })} />
+              <Input type="number" min={10} max={100} disabled={isSaving} {...form.register("weightage", { valueAsNumber: true })} />
             </Field>
           </div>
 
           <div className="flex justify-end gap-2 pt-2">
-            <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
+            <Button type="button" variant="outline" disabled={isSaving} onClick={() => onOpenChange(false)}>
               Cancel
             </Button>
-            <Button type="submit">Save goal</Button>
+            <Button type="submit" disabled={isSaving}>
+              {isSaving ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
+              Save goal
+            </Button>
           </div>
         </form>
       </DialogContent>

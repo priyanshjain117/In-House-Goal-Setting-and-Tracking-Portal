@@ -1,5 +1,7 @@
-import { GoalPortal } from "@/components/dashboard/goal-portal";
+import { redirect } from "next/navigation";
+import { getCurrentProfile, getRoleHome } from "@/lib/auth";
 
-export default function Home() {
-  return <GoalPortal />;
+export default async function Home() {
+  const profile = await getCurrentProfile();
+  redirect(profile ? getRoleHome(profile.role) : "/login");
 }

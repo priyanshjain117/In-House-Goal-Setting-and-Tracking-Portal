@@ -6,12 +6,14 @@ export type GoalType = "min" | "max";
 
 export interface User {
   id: string;
+  authUserId?: string;
   name: string;
   email: string;
   role: Role;
-  managerId?: string;
-  department: string;
-  title: string;
+  managerId?: string | null;
+  department?: string | null;
+  title?: string | null;
+  createdAt?: string;
 }
 
 export interface Goal {
@@ -28,6 +30,15 @@ export interface Goal {
   locked: boolean;
   createdAt: string;
   updatedAt: string;
+}
+
+export interface AuthProfile {
+  id: string;
+  name: string;
+  email: string;
+  role: Role;
+  managerId: string | null;
+  createdAt: string;
 }
 
 export interface ManagerReview {

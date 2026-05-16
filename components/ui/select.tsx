@@ -6,6 +6,7 @@ import { cn } from "@/lib/utils";
 
 export const Select = SelectPrimitive.Root;
 export const SelectValue = SelectPrimitive.Value;
+export const SelectViewport = SelectPrimitive.Viewport;
 
 export function SelectTrigger({
   className,
@@ -14,6 +15,7 @@ export function SelectTrigger({
 }: React.ComponentPropsWithoutRef<typeof SelectPrimitive.Trigger>) {
   return (
     <SelectPrimitive.Trigger
+      type="button"
       className={cn(
         "flex h-10 w-full items-center justify-between rounded-lg border bg-card px-3 text-sm outline-none focus:border-primary focus:ring-2 focus:ring-primary/15 disabled:opacity-50",
         className
@@ -30,14 +32,19 @@ export function SelectTrigger({
 
 export function SelectContent({
   className,
+  children,
   ...props
 }: React.ComponentPropsWithoutRef<typeof SelectPrimitive.Content>) {
   return (
     <SelectPrimitive.Portal>
       <SelectPrimitive.Content
-        className={cn("z-50 min-w-36 overflow-hidden rounded-lg border bg-card p-1 shadow-soft", className)}
+        position="popper"
+        sideOffset={6}
+        className={cn("z-[70] min-w-[var(--radix-select-trigger-width)] overflow-hidden rounded-lg border bg-card p-1 shadow-soft", className)}
         {...props}
-      />
+      >
+        <SelectPrimitive.Viewport>{children}</SelectPrimitive.Viewport>
+      </SelectPrimitive.Content>
     </SelectPrimitive.Portal>
   );
 }
