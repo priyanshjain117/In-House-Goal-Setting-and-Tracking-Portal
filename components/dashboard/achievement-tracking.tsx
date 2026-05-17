@@ -1,6 +1,6 @@
 "use client";
 
-import { BarChart3, CheckCircle2, Clock3, Save } from "lucide-react";
+import { BarChart3, Bell, CheckCircle2, Clock3, Save } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -19,9 +19,12 @@ type Props = {
   goals: Goal[];
   achievements: AchievementUpdate[];
   onSave: (goal: Goal, values: AchievementFormValues) => Promise<void>;
+  onSendReminders?: (quarter: Quarter) => Promise<void>;
 };
 
-export function AchievementTracking({ role, currentUser, users, goals, achievements, onSave }: Props) {
+export function AchievementTracking({ role, currentUser, users, goals, achievements, onSave, onSendReminders }: Props) {
+  const [reminderQuarter, setReminderQuarter] = useState<Quarter>("Q1");
+  const [sendingReminders, setSendingReminders] = useState(false);
   const approvedGoals = useMemo(() => {
     if (role === "employee") {
       return goals.filter((goal) => goal.ownerId === currentUser.id && goal.status === "approved");
@@ -38,6 +41,19 @@ export function AchievementTracking({ role, currentUser, users, goals, achieveme
   const weightedProgress = getWeightedProgress(approvedGoals, achievements);
   const completedCount = approvedGoals.filter((goal) => getLatestAchievement(goal.id, achievements)?.status === "completed").length;
   const onTrackCount = approvedGoals.filter((goal) => getLatestAchievement(goal.id, achievements)?.status === "on_track").length;
+  const pendingReminderCount = approvedGoals.filter(
+    (goal) => !achievements.some((achievement) => achievement.goalId === goal.id && achievement.quarter === reminderQuarter)
+  ).length;
+
+  async function sendReminders() {
+    if (!onSendReminders || sendingReminders) return;
+    setSendingReminders(true);
+    try {
+      await onSendReminders(reminderQuarter);
+    } finally {
+      setSendingReminders(false);
+    }
+  }
 
   return (
     <div className="grid gap-6">
@@ -48,13 +64,38 @@ export function AchievementTracking({ role, currentUser, users, goals, achieveme
       </div>
 
       <Card>
-        <CardHeader>
-          <CardTitle>Quarterly achievement tracking</CardTitle>
-          <p className="text-sm text-muted-foreground">
-            Track planned vs actual progress for approved goals. Progress is calculated from the goal UoM and Min/Max rule.
-          </p>
+        <CardHeader className="gap-3 lg:flex-row lg:items-start lg:justify-between">
+          <div>
+            <CardTitle>Quarterly achievement tracking</CardTitle>
+            <p className="text-sm text-muted-foreground">
+              Track planned vs actual progress for approved goals. Progress is calculated from the goal UoM and Min/Max rule.
+            </p>
+          </div>
+          {onSendReminders ? (
+            <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+              <Select value={reminderQuarter} onValueChange={(quarter: Quarter) => setReminderQuarter(quarter)}>
+                <SelectTrigger className="w-full sm:w-24"><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  {quarters.map((quarter) => (
+                    <SelectItem key={quarter} value={quarter}>{quarter}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <Button type="button" variant="outline" disabled={!pendingReminderCount || sendingReminders} onClick={sendReminders}>
+                {sendingReminders ? <Clock3 className="h-4 w-4 animate-spin" /> : <Bell className="h-4 w-4" />}
+                Send reminders
+              </Button>
+            </div>
+          ) : null}
         </CardHeader>
         <CardContent className="grid gap-4">
+          {onSendReminders ? (
+            <div className="rounded-xl border border-cyan-100 bg-cyan-50 px-4 py-3 text-sm text-cyan-900">
+              {pendingReminderCount
+                ? `${pendingReminderCount} approved goal update${pendingReminderCount === 1 ? "" : "s"} still pending for ${reminderQuarter}.`
+                : `No pending ${reminderQuarter} check-ins in this view.`}
+            </div>
+          ) : null}
           <CheckInSchedule />
           {approvedGoals.length ? (
             <div className="grid gap-4">

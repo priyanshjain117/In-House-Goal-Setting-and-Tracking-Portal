@@ -11,10 +11,13 @@ import type {
   GoalType,
   GoalUom,
   ManagerReview,
+  NotificationEventType,
+  NotificationItem,
   Quarter,
   Role,
   User
 } from "@/lib/domain/types";
+import { notifyGoalDecision, notifyGoalSubmitted, notifyQuarterlyCheckInReminder } from "@/lib/notifications/service";
 import { createClient } from "@/lib/supabase/server";
 
 type GoalRow = {
@@ -65,6 +68,18 @@ type AchievementRow = {
   progress_percent: number | string;
   created_at: string;
   updated_at: string;
+};
+
+type NotificationRow = {
+  id: string;
+  recipient_id: string;
+  actor_id: string | null;
+  event_type: NotificationEventType;
+  title: string;
+  message: string;
+  cta_href: string | null;
+  read_at: string | null;
+  created_at: string;
 };
 
 function toGoal(row: GoalRow): Goal {
@@ -127,30 +142,52 @@ function toAchievement(row: AchievementRow): AchievementUpdate {
   };
 }
 
+function toNotification(row: NotificationRow): NotificationItem {
+  return {
+    id: row.id,
+    recipientId: row.recipient_id,
+    actorId: row.actor_id,
+    eventType: row.event_type,
+    title: row.title,
+    message: row.message,
+    ctaHref: row.cta_href,
+    readAt: row.read_at,
+    createdAt: row.created_at
+  };
+}
+
+function isMissingRelation(error: { code?: string; message?: string } | null) {
+  return error?.code === "42P01" || error?.message?.includes("Could not find the table");
+}
+
 export async function loadWorkspace() {
   const supabase = await createClient();
   const [
     { data: goalRows, error: goalsError },
     { data: userRows, error: usersError },
     { data: reviewRows, error: reviewsError },
-    { data: achievementRows, error: achievementsError }
+    { data: achievementRows, error: achievementsError },
+    { data: notificationRows, error: notificationsError }
   ] = await Promise.all([
     supabase.from("goals").select("*").order("created_at", { ascending: true }),
     supabase.from("users").select("id, name, email, role, manager_id, created_at").order("created_at"),
     supabase.from("manager_reviews").select("*").order("created_at", { ascending: true }),
-    supabase.from("achievement_updates").select("*").order("updated_at", { ascending: false })
+    supabase.from("achievement_updates").select("*").order("updated_at", { ascending: false }),
+    supabase.from("notifications").select("*").order("created_at", { ascending: false }).limit(12)
   ]);
 
   if (goalsError) throw new Error(goalsError.message);
   if (usersError) throw new Error(usersError.message);
   if (reviewsError) throw new Error(reviewsError.message);
   if (achievementsError) throw new Error(achievementsError.message);
+  if (notificationsError && !isMissingRelation(notificationsError)) throw new Error(notificationsError.message);
 
   return {
     goals: (goalRows ?? []).map((row) => toGoal(row as GoalRow)),
     users: (userRows ?? []).map((row) => toUser(row as UserRow)),
     reviews: (reviewRows ?? []).map((row) => toReview(row as ReviewRow)),
-    achievements: (achievementRows ?? []).map((row) => toAchievement(row as AchievementRow))
+    achievements: (achievementRows ?? []).map((row) => toAchievement(row as AchievementRow)),
+    notifications: (notificationRows ?? []).map((row) => toNotification(row as NotificationRow))
   };
 }
 
@@ -202,7 +239,7 @@ export async function deleteGoal(goalId: string) {
   if (error) throw new Error(error.message);
 }
 
-export async function submitGoals(ownerId: string) {
+export async function submitGoals(ownerId: string, actorId: string) {
   const supabase = await createClient();
   const { data, error } = await supabase
     .from("goals")
@@ -212,7 +249,9 @@ export async function submitGoals(ownerId: string) {
     .select("*");
 
   if (error) throw new Error(error.message);
-  return (data ?? []).map((row) => toGoal(row as GoalRow));
+  const goals = (data ?? []).map((row) => toGoal(row as GoalRow));
+  await notifyGoalSubmitted(actorId, ownerId, goals);
+  return goals;
 }
 
 export async function updateGoalFields(goalId: string, patch: Partial<Pick<Goal, "target" | "weightage">>) {
@@ -253,10 +292,54 @@ export async function decideGoals(ownerId: string, managerId: string, status: "a
     reviews = (data ?? []).map((row) => toReview(row as ReviewRow));
   }
 
+  const goals = (updatedRows ?? []).map((row) => toGoal(row as GoalRow));
+  await notifyGoalDecision(managerId, ownerId, status, goals, comment);
+
   return {
-    goals: (updatedRows ?? []).map((row) => toGoal(row as GoalRow)),
+    goals,
     reviews
   };
+}
+
+export async function sendQuarterlyCheckInReminders(actorId: string, quarter: Quarter) {
+  const supabase = await createClient();
+  const [{ data: goalRows, error: goalsError }, { data: achievementRows, error: achievementsError }] = await Promise.all([
+    supabase.from("goals").select("*").eq("status", "approved").order("created_at", { ascending: true }),
+    supabase.from("achievement_updates").select("goal_id, quarter").eq("quarter", quarter)
+  ]);
+
+  if (goalsError) throw new Error(goalsError.message);
+  if (achievementsError) throw new Error(achievementsError.message);
+
+  const updatedGoalIds = new Set((achievementRows ?? []).map((row) => row.goal_id as string));
+  const pendingGoals = (goalRows ?? []).map((row) => toGoal(row as GoalRow)).filter((goal) => !updatedGoalIds.has(goal.id));
+  const goalsByOwner = new Map<string, Goal[]>();
+
+  for (const goal of pendingGoals) {
+    goalsByOwner.set(goal.ownerId, [...(goalsByOwner.get(goal.ownerId) ?? []), goal]);
+  }
+
+  const results = await Promise.all(
+    Array.from(goalsByOwner.entries()).map(([employeeId, goals]) => notifyQuarterlyCheckInReminder(actorId, employeeId, quarter, goals))
+  );
+
+  return {
+    remindedEmployees: results.length,
+    pendingGoals: pendingGoals.length
+  };
+}
+
+export async function markNotificationsRead(notificationIds: string[]) {
+  if (!notificationIds.length) return [];
+  const supabase = await createClient();
+  const { data, error } = await supabase
+    .from("notifications")
+    .update({ read_at: new Date().toISOString() })
+    .in("id", notificationIds)
+    .select("*");
+
+  if (error) throw new Error(error.message);
+  return (data ?? []).map((row) => toNotification(row as NotificationRow));
 }
 
 export async function pushSharedGoal(ownerIds: string[], primaryOwnerId: string) {

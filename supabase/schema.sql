@@ -141,6 +141,34 @@ create table if not exists public.audit_logs (
   created_at timestamptz not null default now()
 );
 
+create table if not exists public.notifications (
+  id uuid primary key default gen_random_uuid(),
+  recipient_id uuid not null references public.users(id) on delete cascade,
+  actor_id uuid references public.users(id) on delete set null,
+  event_type text not null,
+  title text not null,
+  message text not null,
+  cta_href text,
+  metadata jsonb not null default '{}'::jsonb,
+  dedupe_key text unique,
+  read_at timestamptz,
+  created_at timestamptz not null default now()
+);
+
+create table if not exists public.email_logs (
+  id uuid primary key default gen_random_uuid(),
+  recipient_id uuid references public.users(id) on delete set null,
+  recipient_email text not null,
+  event_type text not null,
+  subject text not null,
+  status text not null default 'pending' check (status in ('pending', 'sent', 'failed', 'skipped')),
+  provider_message_id text,
+  error text,
+  dedupe_key text unique,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
 create index if not exists users_manager_id_idx on public.users(manager_id);
 create index if not exists goals_employee_status_idx on public.goals(employee_id, status);
 create index if not exists goals_created_at_idx on public.goals(created_at);
@@ -154,6 +182,10 @@ create index if not exists check_ins_achievement_id_idx on public.check_ins(achi
 create index if not exists progress_snapshots_goal_quarter_idx on public.progress_snapshots(goal_id, quarter);
 create index if not exists audit_logs_actor_created_idx on public.audit_logs(actor_id, created_at desc);
 create index if not exists audit_logs_entity_idx on public.audit_logs(entity_type, entity_id);
+create index if not exists notifications_recipient_created_idx on public.notifications(recipient_id, created_at desc);
+create index if not exists notifications_unread_idx on public.notifications(recipient_id, read_at) where read_at is null;
+create index if not exists email_logs_recipient_created_idx on public.email_logs(recipient_id, created_at desc);
+create index if not exists email_logs_event_status_idx on public.email_logs(event_type, status);
 
 create or replace function public.set_updated_at()
 returns trigger
@@ -178,6 +210,11 @@ for each row execute function public.set_updated_at();
 drop trigger if exists set_quarterly_reviews_updated_at on public.quarterly_reviews;
 create trigger set_quarterly_reviews_updated_at
 before update on public.quarterly_reviews
+for each row execute function public.set_updated_at();
+
+drop trigger if exists set_email_logs_updated_at on public.email_logs;
+create trigger set_email_logs_updated_at
+before update on public.email_logs
 for each row execute function public.set_updated_at();
 
 create or replace function public.create_profile_for_auth_user()
@@ -252,6 +289,8 @@ alter table public.quarterly_reviews enable row level security;
 alter table public.check_ins enable row level security;
 alter table public.progress_snapshots enable row level security;
 alter table public.audit_logs enable row level security;
+alter table public.notifications enable row level security;
+alter table public.email_logs enable row level security;
 
 drop policy if exists "Users can read self team and admin profiles" on public.users;
 create policy "Users can read self team and admin profiles"
@@ -500,5 +539,43 @@ create policy "Authenticated users create audit logs"
 on public.audit_logs for insert
 to authenticated
 with check (actor_id = auth.uid() or public.current_user_role() = 'admin');
+
+drop policy if exists "Users read own notifications" on public.notifications;
+create policy "Users read own notifications"
+on public.notifications for select
+to authenticated
+using (recipient_id = auth.uid() or public.current_user_role() = 'admin');
+
+drop policy if exists "Users mark own notifications read" on public.notifications;
+create policy "Users mark own notifications read"
+on public.notifications for update
+to authenticated
+using (recipient_id = auth.uid() or public.current_user_role() = 'admin')
+with check (recipient_id = auth.uid() or public.current_user_role() = 'admin');
+
+drop policy if exists "Authenticated users create notifications" on public.notifications;
+create policy "Authenticated users create notifications"
+on public.notifications for insert
+to authenticated
+with check (actor_id = auth.uid() or public.current_user_role() in ('manager', 'admin'));
+
+drop policy if exists "Admins read email logs" on public.email_logs;
+create policy "Admins read email logs"
+on public.email_logs for select
+to authenticated
+using (public.current_user_role() = 'admin');
+
+drop policy if exists "Authenticated users create email logs" on public.email_logs;
+create policy "Authenticated users create email logs"
+on public.email_logs for insert
+to authenticated
+with check (true);
+
+drop policy if exists "Authenticated users update email logs" on public.email_logs;
+create policy "Authenticated users update email logs"
+on public.email_logs for update
+to authenticated
+using (true)
+with check (true);
 
 notify pgrst, 'reload schema';

@@ -19,6 +19,7 @@ import { useEffect, useMemo, useState } from "react";
 import { GoalFormDialog } from "@/components/goals/goal-form-dialog";
 import { logoutAction } from "@/app/login/actions";
 import { AchievementTracking } from "@/components/dashboard/achievement-tracking";
+import { NotificationMenu } from "@/components/notifications/notification-menu";
 import { VisualDashboard } from "@/components/dashboard/visual-dashboard";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -27,14 +28,16 @@ import { Progress } from "@/components/ui/progress";
 import { Textarea } from "@/components/ui/textarea";
 import { Toast, ToastDescription, ToastProvider, ToastTitle, ToastViewport } from "@/components/ui/toast";
 import { MAX_GOALS, isEmployeeEditableStatus, validateGoalSet } from "@/lib/domain/goal-validation";
-import type { AchievementFormValues, AchievementUpdate, AuthProfile, Goal, GoalFormValues, ManagerReview, Role, User } from "@/lib/domain/types";
+import type { AchievementFormValues, AchievementUpdate, AuthProfile, Goal, GoalFormValues, ManagerReview, NotificationItem, Quarter, Role, User } from "@/lib/domain/types";
 import { cn } from "@/lib/utils";
 import {
   decideGoals,
   deleteGoal,
   insertGoal,
   loadWorkspace,
+  markNotificationsRead,
   pushSharedGoal,
+  sendQuarterlyCheckInReminders,
   submitGoals as submitWorkspaceGoals,
   unlockGoal,
   updateGoal,
@@ -71,11 +74,13 @@ export function GoalPortal({ initialRole = "employee", profile }: GoalPortalProp
   const [goals, setGoals] = useState<Goal[]>([]);
   const [reviews, setReviews] = useState<ManagerReview[]>([]);
   const [achievements, setAchievements] = useState<AchievementUpdate[]>([]);
+  const [notifications, setNotifications] = useState<NotificationItem[]>([]);
   const [loaded, setLoaded] = useState(false);
   const [startupError, setStartupError] = useState<string | null>(null);
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editingGoal, setEditingGoal] = useState<Goal | null>(null);
   const [savingGoal, setSavingGoal] = useState(false);
+  const [submittingGoals, setSubmittingGoals] = useState(false);
   const [toast, setToast] = useState<{ title: string; description: string } | null>(null);
 
   useEffect(() => {
@@ -89,12 +94,14 @@ export function GoalPortal({ initialRole = "employee", profile }: GoalPortalProp
         setReviews(workspace.reviews);
         setAchievements(workspace.achievements);
         setUsers(workspace.users);
+        setNotifications(workspace.notifications);
       } catch (error) {
         if (!isMounted) return;
         setGoals([]);
         setUsers([]);
         setReviews([]);
         setAchievements([]);
+        setNotifications([]);
         setStartupError(error instanceof Error ? error.message : "Unable to load workspace data.");
       } finally {
         if (isMounted) setLoaded(true);
@@ -116,6 +123,11 @@ export function GoalPortal({ initialRole = "employee", profile }: GoalPortalProp
 
   function notify(title: string, description: string) {
     setToast({ title, description });
+  }
+
+  async function refreshNotifications() {
+    const workspace = await loadWorkspace();
+    setNotifications(workspace.notifications);
   }
 
   function navigateToSection(sectionId: string) {
@@ -172,14 +184,18 @@ export function GoalPortal({ initialRole = "employee", profile }: GoalPortalProp
 
   async function submitGoals() {
     if (!employee) return;
+    setSubmittingGoals(true);
     try {
       const submittedGoals = await submitWorkspaceGoals(employee.id);
       setGoals((currentGoals) =>
         currentGoals.map((goal) => submittedGoals.find((submittedGoal) => submittedGoal.id === goal.id) ?? goal)
       );
-      notify("Submitted for approval", "Your manager can now review these goals.");
+      await refreshNotifications();
+      notify("Submitted for approval", "Your manager has been notified by email and in GoalOS.");
     } catch (error) {
       notify("Submit failed", error instanceof Error ? error.message : "Please try again.");
+    } finally {
+      setSubmittingGoals(false);
     }
   }
 
@@ -197,6 +213,27 @@ export function GoalPortal({ initialRole = "employee", profile }: GoalPortalProp
     } catch (error) {
       notify("Update failed", error instanceof Error ? error.message : "Please try again.");
     }
+  }
+
+  async function sendCheckInReminders(quarter: Quarter) {
+    try {
+      const result = await sendQuarterlyCheckInReminders(quarter);
+      await refreshNotifications();
+      notify(
+        "Reminders sent",
+        result.pendingGoals
+          ? `${result.remindedEmployees} employee${result.remindedEmployees === 1 ? "" : "s"} notified for ${result.pendingGoals} pending update${result.pendingGoals === 1 ? "" : "s"}.`
+          : "No pending quarterly check-ins were found."
+      );
+    } catch (error) {
+      notify("Reminder failed", error instanceof Error ? error.message : "Please try again.");
+    }
+  }
+
+  async function markRead(notificationIds: string[]) {
+    const updatedNotifications = await markNotificationsRead(notificationIds);
+    const updatedById = new Map(updatedNotifications.map((notification) => [notification.id, notification]));
+    setNotifications((current) => current.map((notification) => updatedById.get(notification.id) ?? notification));
   }
 
   if (!loaded) {
@@ -294,6 +331,7 @@ export function GoalPortal({ initialRole = "employee", profile }: GoalPortalProp
                 </div>
               </div>
               <div className="flex items-center gap-3">
+                <NotificationMenu notifications={notifications} onMarkRead={markRead} />
                 <div className="hidden text-right text-sm sm:block">
                   <p className="font-medium">{currentUser.name}</p>
                   <p className="text-xs capitalize text-muted-foreground">{currentUser.role === "admin" ? "Admin/HR" : currentUser.role}</p>
@@ -347,6 +385,7 @@ export function GoalPortal({ initialRole = "employee", profile }: GoalPortalProp
                   }}
                   onDelete={removeGoal}
                   onSubmit={submitGoals}
+                  isSubmitting={submittingGoals}
                 />
               </div>
             ) : null}
@@ -360,6 +399,7 @@ export function GoalPortal({ initialRole = "employee", profile }: GoalPortalProp
                   reviews={reviews}
                   setReviews={setReviews}
                   notify={notify}
+                  onNotificationsChanged={refreshNotifications}
                   onPushSharedGoal={async (ownerIds) => {
                     try {
                       const sharedGoals = await pushSharedGoal(ownerIds);
@@ -385,6 +425,7 @@ export function GoalPortal({ initialRole = "employee", profile }: GoalPortalProp
                 goals={goals}
                 achievements={achievements}
                 onSave={saveAchievement}
+                onSendReminders={role === "manager" || role === "admin" ? sendCheckInReminders : undefined}
               />
             </div>
           </section>
@@ -491,7 +532,8 @@ function EmployeeDashboard({
   onCreate,
   onEdit,
   onDelete,
-  onSubmit
+  onSubmit,
+  isSubmitting
 }: {
   goals: Goal[];
   reviews: ManagerReview[];
@@ -500,6 +542,7 @@ function EmployeeDashboard({
   onEdit: (goal: Goal) => void;
   onDelete: (goalId: string) => void;
   onSubmit: () => void;
+  isSubmitting: boolean;
 }) {
   const hasSubmittedGoals = goals.some((goal) => goal.status === "submitted");
   const editableGoalCount = goals.filter((goal) => isEmployeeEditableStatus(goal.status) && !goal.locked).length;
@@ -550,7 +593,8 @@ function EmployeeDashboard({
               Submitted goals are with your manager. Returned goals can be edited and resubmitted.
             </div>
           ) : null}
-          <Button disabled={!canSubmit} onClick={onSubmit}>
+          <Button disabled={!canSubmit || isSubmitting} onClick={onSubmit}>
+            {isSubmitting ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
             Submit goals
           </Button>
           <p className="text-sm text-muted-foreground">Approved goals stay visible but locked. Admins can unlock exceptions.</p>
@@ -658,6 +702,7 @@ function ManagerDashboard({
   reviews,
   setReviews,
   notify,
+  onNotificationsChanged,
   onPushSharedGoal
 }: {
   goals: Goal[];
@@ -667,6 +712,7 @@ function ManagerDashboard({
   reviews: ManagerReview[];
   setReviews: (reviews: ManagerReview[]) => void;
   notify: (title: string, description: string) => void;
+  onNotificationsChanged: () => Promise<void>;
   onPushSharedGoal: (ownerIds: string[]) => Promise<void>;
 }) {
   const submittedOwners = useMemo(() => {
@@ -674,6 +720,7 @@ function ManagerDashboard({
     return users.filter((user) => ownerIds.has(user.id) && user.managerId === currentUser.id);
   }, [currentUser.id, goals, users]);
   const [comment, setComment] = useState("Looks aligned to the quarter priorities.");
+  const [decidingOwnerId, setDecidingOwnerId] = useState<string | null>(null);
 
   async function updateInline(goalId: string, patch: Partial<Pick<Goal, "target" | "weightage">>) {
     const previousGoals = goals;
@@ -700,14 +747,21 @@ function ManagerDashboard({
       notify("Comment required", "Add a short rework comment before returning goals.");
       return;
     }
+    setDecidingOwnerId(ownerId);
     try {
       const result = await decideGoals(ownerId, status, comment.trim());
       const decidedGoals = result.goals;
       setGoals(goals.map((goal) => decidedGoals.find((decidedGoal) => decidedGoal.id === goal.id) ?? goal));
       setReviews([...reviews, ...result.reviews]);
-      notify(status === "approved" ? "Goals approved" : "Goals rejected", "The employee plan has been updated.");
+      await onNotificationsChanged();
+      notify(
+        status === "approved" ? "Goals approved" : "Goals rejected",
+        status === "approved" ? "The employee has been notified by email." : "Rework email and in-app notification sent."
+      );
     } catch (error) {
       notify("Review failed", error instanceof Error ? error.message : "Please try again.");
+    } finally {
+      setDecidingOwnerId(null);
     }
   }
 
@@ -792,8 +846,14 @@ function ManagerDashboard({
                 placeholder="Add review comments for the employee."
               />
               <div className="flex justify-end gap-2">
-                <Button variant="outline" onClick={() => decide(owner.id, "rejected")}>Reject</Button>
-                <Button disabled={!reviewValidation.canSubmit} onClick={() => decide(owner.id, "approved")}>Approve</Button>
+                <Button variant="outline" disabled={decidingOwnerId === owner.id} onClick={() => decide(owner.id, "rejected")}>
+                  {decidingOwnerId === owner.id ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
+                  Reject
+                </Button>
+                <Button disabled={!reviewValidation.canSubmit || decidingOwnerId === owner.id} onClick={() => decide(owner.id, "approved")}>
+                  {decidingOwnerId === owner.id ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
+                  Approve
+                </Button>
               </div>
             </CardContent>
           </Card>

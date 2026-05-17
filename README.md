@@ -30,9 +30,14 @@ Open `http://localhost:3000`.
 NEXT_PUBLIC_SUPABASE_URL=https://your-project-ref.supabase.co
 NEXT_PUBLIC_SUPABASE_ANON_KEY=...
 SUPABASE_SERVICE_ROLE_KEY=...
+NEXT_PUBLIC_APP_URL=http://localhost:3000
+SMTP_EMAIL=your-gmail-address@gmail.com
+SMTP_PASSWORD=your-gmail-app-password
 ```
 
-`SUPABASE_SERVICE_ROLE_KEY` is only used by the local seed script to create demo Auth users and database rows. Do not expose it with a `NEXT_PUBLIC_` prefix.
+`SUPABASE_SERVICE_ROLE_KEY` is used by the local seed script and, when present, by server-side notification logging so email delivery does not depend on end-user RLS. Do not expose it with a `NEXT_PUBLIC_` prefix.
+
+`SMTP_EMAIL` and `SMTP_PASSWORD` enable Gmail SMTP sending through Nodemailer. Use a Gmail app password. If either value is missing, notification actions still create in-app notifications and record skipped email logs, which keeps the demo workflow stable.
 
 4. Seed demo Auth users and role rows:
 
@@ -72,6 +77,7 @@ The demo follows `Frontend -> Next API -> Supabase`.
 
 - Frontend components render only API responses and user-entered form state.
 - Workspace records are read from Supabase tables: `users`, `goals`, `manager_reviews`, and `achievement_updates`.
+- Notifications are read from `notifications`; delivery attempts are tracked in `email_logs`.
 - `npm run db:seed` inserts the hackathon demo records into Supabase; the app runtime has no localStorage/mock JSON fallback.
 
 ## Schema Cache Fix
@@ -93,3 +99,14 @@ Then run `npm run db:seed` once so the demo Auth users and `public.users` rows e
 - Managers can review submitted goals and approve or reject them.
 - Approved goals are locked.
 - Admin/HR can unlock goals back to draft.
+
+## Email Notifications
+
+GoalOS sends enterprise-style workflow notifications through Gmail SMTP and Nodemailer:
+
+- Employee submits goals -> manager gets `Goal Sheet Submitted`.
+- Manager approves goals -> employee gets `Goals Approved`.
+- Manager rejects goals -> employee gets `Goals Returned for Rework`.
+- Manager/Admin sends quarterly reminders -> employees with pending check-ins get `Quarterly Check-in Reminder`; the sender is copied on the email.
+
+Each event also creates a lightweight in-app notification shown in the header bell. Email attempts use a `dedupe_key` in `email_logs` to prevent duplicate sends during repeat clicks or retries.

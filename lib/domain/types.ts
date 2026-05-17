@@ -85,3 +85,17 @@ export interface AchievementFormValues {
   employeeComment: string;
   managerComment: string;
 }
+
+export type NotificationEventType = "goal_submitted" | "goals_approved" | "goals_rejected" | "quarterly_checkin_reminder";
+
+export interface NotificationItem {
+  id: string;
+  recipientId: string;
+  actorId: string | null;
+  eventType: NotificationEventType;
+  title: string;
+  message: string;
+  ctaHref: string | null;
+  readAt: string | null;
+  createdAt: string;
+}

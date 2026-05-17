@@ -6,7 +6,9 @@ import {
   deleteGoal,
   insertGoal,
   loadWorkspace,
+  markNotificationsRead,
   pushSharedGoal,
+  sendQuarterlyCheckInReminders,
   submitGoals,
   unlockGoal,
   updateGoal,
@@ -14,11 +16,20 @@ import {
   upsertAchievement
 } from "@/lib/services/workspace-repository";
 
+export const runtime = "nodejs";
+
 export async function GET() {
   const profile = await getCurrentProfile();
   if (!profile) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
-  return NextResponse.json(await loadWorkspace());
+  try {
+    return NextResponse.json(await loadWorkspace());
+  } catch (error) {
+    return NextResponse.json(
+      { error: error instanceof Error ? error.message : "Workspace request failed." },
+      { status: 500 }
+    );
+  }
 }
 
 export async function POST(request: Request) {
@@ -37,11 +48,15 @@ export async function POST(request: Request) {
         await deleteGoal(body.goalId);
         return NextResponse.json({ ok: true });
       case "submitGoals":
-        return NextResponse.json(await submitGoals(body.ownerId));
+        return NextResponse.json(await submitGoals(body.ownerId, profile.id));
       case "updateGoalFields":
         return NextResponse.json(await updateGoalFields(body.goalId, body.patch));
       case "decideGoals":
         return NextResponse.json(await decideGoals(body.ownerId, profile.id, body.status, body.comment));
+      case "sendQuarterlyCheckInReminders":
+        return NextResponse.json(await sendQuarterlyCheckInReminders(profile.id, body.quarter));
+      case "markNotificationsRead":
+        return NextResponse.json(await markNotificationsRead(body.notificationIds ?? []));
       case "pushSharedGoal":
         return NextResponse.json(await pushSharedGoal(body.ownerIds, profile.id));
       case "unlockGoal":

@@ -1,12 +1,13 @@
 "use client";
 
-import type { AchievementFormValues, AchievementUpdate, Goal, GoalFormValues, ManagerReview, User } from "@/lib/domain/types";
+import type { AchievementFormValues, AchievementUpdate, Goal, GoalFormValues, ManagerReview, NotificationItem, Quarter, User } from "@/lib/domain/types";
 
 type Workspace = {
   users: User[];
   goals: Goal[];
   reviews: ManagerReview[];
   achievements: AchievementUpdate[];
+  notifications: NotificationItem[];
 };
 
 async function workspaceRequest<T>(payload?: Record<string, unknown>): Promise<T> {
@@ -16,12 +17,21 @@ async function workspaceRequest<T>(payload?: Record<string, unknown>): Promise<T
     body: payload ? JSON.stringify(payload) : undefined
   });
 
-  const data = await response.json();
+  const responseText = await response.text();
+  const data = responseText ? parseWorkspaceResponse(responseText) : null;
   if (!response.ok) {
-    throw new Error(data.error ?? "Workspace API request failed.");
+    throw new Error(data?.error ?? "Workspace API request failed.");
   }
 
   return data as T;
+}
+
+function parseWorkspaceResponse(responseText: string) {
+  try {
+    return JSON.parse(responseText);
+  } catch {
+    return null;
+  }
 }
 
 export function loadWorkspace() {
@@ -50,6 +60,14 @@ export function updateGoalFields(goalId: string, patch: Partial<Pick<Goal, "targ
 
 export function decideGoals(ownerId: string, status: "approved" | "rejected", comment: string) {
   return workspaceRequest<{ goals: Goal[]; reviews: ManagerReview[] }>({ action: "decideGoals", ownerId, status, comment });
+}
+
+export function sendQuarterlyCheckInReminders(quarter: Quarter) {
+  return workspaceRequest<{ remindedEmployees: number; pendingGoals: number }>({ action: "sendQuarterlyCheckInReminders", quarter });
+}
+
+export function markNotificationsRead(notificationIds: string[]) {
+  return workspaceRequest<NotificationItem[]>({ action: "markNotificationsRead", notificationIds });
 }
 
 export function pushSharedGoal(ownerIds: string[]) {
