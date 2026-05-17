@@ -131,24 +131,32 @@ GoalOS follows a modular Next.js + Supabase architecture. The frontend renders r
 
 ```mermaid
 flowchart LR
-  Judge[Hackathon Judge / User] --> Login[Next.js Login Page]
-  Login --> Auth[Supabase Auth]
-  Auth --> Middleware[Next.js Middleware]
-  Middleware --> Employee[Employee Dashboard]
-  Middleware --> Manager[Manager Dashboard]
-  Middleware --> Admin[Admin/HR Dashboard]
+  User["Judge / Employee / Manager / Admin"] --> Login["Login Page"]
+  Login --> Auth["Supabase Auth"]
+  Auth --> Middleware["Next.js Middleware"]
 
-  Employee --> API[Workspace API Route]
-  Manager --> API
-  Admin --> API
+  subgraph App["Next.js App Router"]
+    Middleware --> Employee["Employee Portal"]
+    Middleware --> Manager["Manager Portal"]
+    Middleware --> Admin["Admin/HR Portal"]
+    Employee --> API["Workspace API"]
+    Manager --> API
+    Admin --> API
+  end
 
-  API --> Repo[Workspace Repository]
-  Repo --> DB[(Supabase Postgres)]
-  Repo --> Notify[Notification Service]
-  Notify --> InApp[(Notifications Table)]
-  Notify --> Email[SMTP Email Provider]
-  Admin --> Escalations[Escalation Service]
-  Escalations --> DB
+  subgraph Server["Server Modules"]
+    API --> Repository["Workspace Repository"]
+    Repository --> NotificationService["Notification Service"]
+    Repository --> EscalationService["Escalation Service"]
+  end
+
+  subgraph Supabase["Supabase Backend"]
+    Repository --> Database[("Postgres Database")]
+    Database --> Tables["Users, Goals, Reviews, Achievements"]
+    Database --> OpsTables["Notifications, Email Logs, Escalations"]
+  end
+
+  NotificationService --> Email["SMTP Email Provider"]
 ```
 
 ### Request Flow
@@ -157,10 +165,10 @@ flowchart LR
 sequenceDiagram
   participant User
   participant UI as Next.js UI
-  participant API as /api/workspace
-  participant Repo as Server Repository
+  participant API as Workspace API
+  participant Repo as Repository Layer
   participant DB as Supabase Postgres
-  participant Notify as Notifications
+  participant Notify as Notification Service
 
   User->>UI: Submit goals / approve / update progress
   UI->>API: Authenticated workspace action
@@ -178,48 +186,151 @@ sequenceDiagram
 
 ```mermaid
 erDiagram
-  USERS ||--o{ GOALS : owns
   USERS ||--o{ USERS : manages
-  GOALS ||--o{ MANAGER_REVIEWS : receives
+  USERS ||--o{ GOALS : owns
+  USERS ||--o{ GOALS : primary_owner
+  GOALS ||--o{ MANAGER_REVIEWS : has
+  USERS ||--o{ MANAGER_REVIEWS : writes
   GOALS ||--o{ ACHIEVEMENT_UPDATES : tracks
+  USERS ||--o{ ACHIEVEMENT_UPDATES : updates
+  USERS ||--o{ QUARTERLY_REVIEWS : receives
+  USERS ||--o{ QUARTERLY_REVIEWS : reviews
+  ACHIEVEMENT_UPDATES ||--o{ CHECK_INS : has
+  USERS ||--o{ CHECK_INS : writes
+  GOALS ||--o{ PROGRESS_SNAPSHOTS : snapshots
   USERS ||--o{ NOTIFICATIONS : receives
+  USERS ||--o{ NOTIFICATIONS : triggers
   USERS ||--o{ EMAIL_LOGS : receives
-  USERS ||--o{ ESCALATIONS : involved_in
+  USERS ||--o{ ESCALATIONS : employee
+  USERS ||--o{ ESCALATIONS : manager
+  GOALS ||--o{ ESCALATIONS : flags
   ESCALATIONS ||--o{ ESCALATION_LOGS : records
+  USERS ||--o{ ESCALATION_LOGS : acts
+  USERS ||--o{ AUDIT_LOGS : audits
 
   USERS {
-    uuid id
+    uuid id PK
     text name
     text email
-    app_role role
-    uuid manager_id
+    string role
+    uuid manager_id FK
+    datetime created_at
   }
 
   GOALS {
-    uuid id
-    uuid employee_id
-    text title
+    uuid id PK
+    uuid employee_id FK
+    uuid shared_goal_group_id
+    uuid primary_owner_id FK
     text thrust_area
-    goal_status status
-    int weightage
+    text title
+    text description
+    text uom
+    string goal_type
+    text target
+    numeric weightage
+    string status
+    boolean approved
     boolean locked
+    text manager_comment
   }
 
   MANAGER_REVIEWS {
-    uuid id
-    uuid goal_id
-    uuid manager_id
-    review_action action
+    uuid id PK
+    uuid goal_id FK
+    uuid manager_id FK
+    string action
     text comment
+    datetime created_at
   }
 
   ACHIEVEMENT_UPDATES {
-    uuid id
-    uuid goal_id
-    goal_quarter quarter
+    uuid id PK
+    uuid goal_id FK
+    uuid employee_id FK
+    string quarter
     text actual_value
-    progress_status status
-    int progress_percent
+    string status
+    text employee_comment
+    text manager_comment
+    numeric progress_percent
+  }
+
+  QUARTERLY_REVIEWS {
+    uuid id PK
+    uuid employee_id FK
+    uuid manager_id FK
+    string quarter
+    text summary
+  }
+
+  CHECK_INS {
+    uuid id PK
+    uuid achievement_id FK
+    uuid actor_id FK
+    text comment
+    datetime created_at
+  }
+
+  PROGRESS_SNAPSHOTS {
+    uuid id PK
+    uuid goal_id FK
+    string quarter
+    numeric progress_percent
+    string status
+    datetime captured_at
+  }
+
+  NOTIFICATIONS {
+    uuid id PK
+    uuid recipient_id FK
+    uuid actor_id FK
+    text event_type
+    text title
+    text message
+    text cta_href
+    datetime read_at
+  }
+
+  EMAIL_LOGS {
+    uuid id PK
+    uuid recipient_id FK
+    text recipient_email
+    text event_type
+    text subject
+    string status
+    text dedupe_key
+  }
+
+  ESCALATIONS {
+    uuid id PK
+    text escalation_type
+    string status
+    string severity
+    uuid employee_id FK
+    uuid manager_id FK
+    uuid goal_id FK
+    string quarter
+    text title
+    datetime due_at
+  }
+
+  ESCALATION_LOGS {
+    uuid id PK
+    uuid escalation_id FK
+    uuid actor_id FK
+    text event_type
+    text message
+  }
+
+  AUDIT_LOGS {
+    uuid id PK
+    uuid actor_id FK
+    text entity_type
+    uuid entity_id
+    text action
+    json before_payload
+    json after_payload
   }
 ```
 
@@ -446,4 +557,3 @@ Recommended deployment path:
 - The database seed creates users, goals, reviews, achievements, and demo analytics data.
 - Email credentials are optional; the demo remains functional through in-app notifications even without SMTP setup.
 - The implementation avoids mock localStorage data and reads workspace records from Supabase through the Next.js API layer.
-
