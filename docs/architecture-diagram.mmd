@@ -1,0 +1,103 @@
+flowchart LR
+  %% GoalOS architecture diagram for AtomQuest Hackathon 1.0
+
+  subgraph Users["Users"]
+    Employee["Employee"]
+    Manager["Manager"]
+    Admin["Admin / HR"]
+    Judge["Hackathon Judge"]
+  end
+
+  subgraph Deploy["Deployment"]
+    Vercel["Vercel<br/>Next.js Hosting"]
+    SupabaseCloud["Supabase Cloud<br/>Auth + Postgres"]
+    EmailProvider["Current Email Provider<br/>Nodemailer + Gmail SMTP"]
+    Resend["Resend<br/>Production Email Option"]
+  end
+
+  subgraph Frontend["Frontend: Next.js App Router"]
+    Login["/login<br/>Demo credentials + Supabase sign-in"]
+    Middleware["middleware.ts<br/>Session refresh + route protection"]
+    EmployeeDash["/employee<br/>Employee Dashboard"]
+    ManagerDash["/manager<br/>Manager Dashboard"]
+    AdminDash["/admin<br/>Admin / HR Dashboard"]
+    UI["Tailwind CSS + shadcn-style Radix UI<br/>Cards, dialogs, inputs, toasts"]
+    Charts["Recharts<br/>KPI cards, trends, distributions, heatmaps"]
+  end
+
+  subgraph API["Backend: Next.js Server Layer"]
+    ServerActions["Server Actions<br/>loginAction, logoutAction"]
+    WorkspaceAPI["/api/workspace<br/>Authenticated workspace endpoint"]
+    ClientService["workspace-api-client.ts<br/>Typed browser API wrapper"]
+    Repository["workspace-repository.ts<br/>Supabase repository"]
+  end
+
+  subgraph Domain["Domain Services"]
+    Validation["goal-validation.ts<br/>8-goal limit, min 10%, total 100%"]
+    Progress["progress.ts<br/>planned vs actual progress"]
+    Analytics["analytics.ts<br/>role-aware dashboard engine"]
+    Notifications["notifications/service.ts<br/>in-app + email workflow events"]
+    Escalations["escalations/service.ts<br/>submission, approval, check-in governance"]
+  end
+
+  subgraph Database["Supabase PostgreSQL"]
+    Auth["Supabase Auth<br/>auth.users"]
+    UsersTable["users<br/>role + manager mapping"]
+    GoalsTable["goals<br/>draft, submitted, approved, rejected, locked"]
+    ReviewsTable["manager_reviews"]
+    AchievementsTable["achievement_updates<br/>quarterly check-ins"]
+    NotificationTables["notifications + email_logs"]
+    GovernanceTables["escalations + escalation_logs + audit_logs"]
+  end
+
+  Employee --> Login
+  Manager --> Login
+  Admin --> Login
+  Judge --> Login
+
+  Vercel --> Login
+  Login --> ServerActions
+  ServerActions --> Auth
+  Auth --> Middleware
+  Middleware --> EmployeeDash
+  Middleware --> ManagerDash
+  Middleware --> AdminDash
+
+  EmployeeDash --> UI
+  ManagerDash --> UI
+  AdminDash --> UI
+  EmployeeDash --> ClientService
+  ManagerDash --> ClientService
+  AdminDash --> ClientService
+
+  ClientService --> WorkspaceAPI
+  WorkspaceAPI --> Repository
+  WorkspaceAPI --> Escalations
+  Repository --> Validation
+  Repository --> Progress
+  Repository --> Notifications
+  EmployeeDash --> Analytics
+  ManagerDash --> Analytics
+  AdminDash --> Analytics
+  Analytics --> Charts
+
+  Repository --> UsersTable
+  Repository --> GoalsTable
+  Repository --> ReviewsTable
+  Repository --> AchievementsTable
+  Notifications --> NotificationTables
+  Escalations --> GovernanceTables
+
+  SupabaseCloud --> Auth
+  SupabaseCloud --> UsersTable
+  Notifications --> EmailProvider
+  Notifications -. "adapter boundary" .-> Resend
+
+  Employee -. "Goal creation + quarterly updates" .-> GoalsTable
+  GoalsTable -. "Submit for approval" .-> ManagerDash
+  ManagerDash -. "Approve / reject" .-> ReviewsTable
+  ReviewsTable -. "Lock approved goals" .-> GoalsTable
+  AchievementsTable -. "Analytics input" .-> Analytics
+  Analytics -. "Dashboard output" .-> Charts
+  Notifications -. "Workflow alerts" .-> Employee
+  Notifications -. "Workflow alerts" .-> Manager
