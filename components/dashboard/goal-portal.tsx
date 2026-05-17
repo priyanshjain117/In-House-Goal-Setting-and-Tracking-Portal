@@ -3,6 +3,8 @@
 import {
   AlertCircle,
   CheckCircle2,
+  ChevronLeft,
+  ChevronRight,
   ClipboardList,
   LayoutDashboard,
   Loader2,
@@ -79,6 +81,7 @@ type GoalPortalProps = {
 export function GoalPortal({ initialRole = "employee", profile }: GoalPortalProps) {
   const [role] = useState<Role>(initialRole);
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [users, setUsers] = useState<User[]>(seedUsers);
   const [goals, setGoals] = useState<Goal[]>([]);
   const [reviews, setReviews] = useState<ManagerReview[]>([]);
@@ -307,8 +310,18 @@ export function GoalPortal({ initialRole = "employee", profile }: GoalPortalProp
   return (
     <ToastProvider>
       <div className="min-h-screen bg-background">
-        <aside className="fixed inset-y-0 left-0 z-30 hidden w-64 border-r bg-card px-4 py-5 lg:block">
-          <SidebarContent role={role} onNavigate={navigateToSection} />
+        <aside
+          className={cn(
+            "fixed inset-y-0 left-0 z-30 hidden border-r bg-card px-3 py-5 transition-[width] duration-200 ease-out lg:block",
+            sidebarCollapsed ? "w-20" : "w-64"
+          )}
+        >
+          <SidebarContent
+            role={role}
+            collapsed={sidebarCollapsed}
+            onNavigate={navigateToSection}
+            onToggleCollapse={() => setSidebarCollapsed((current) => !current)}
+          />
         </aside>
 
         {sidebarOpen ? (
@@ -332,10 +345,10 @@ export function GoalPortal({ initialRole = "employee", profile }: GoalPortalProp
               <X className="h-4 w-4" />
             </Button>
           </div>
-          <SidebarContent role={role} onNavigate={navigateToSection} />
+          <SidebarContent role={role} collapsed={false} onNavigate={navigateToSection} />
         </aside>
 
-        <main className="min-w-0 lg:pl-64">
+        <main className={cn("min-w-0 transition-[padding] duration-200 ease-out", sidebarCollapsed ? "lg:pl-20" : "lg:pl-64")}>
           <header className="sticky top-0 z-20 border-b bg-background/85 px-4 py-3 backdrop-blur sm:px-6">
             <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
               <div className="flex min-w-0 items-start gap-3">
@@ -480,7 +493,17 @@ export function GoalPortal({ initialRole = "employee", profile }: GoalPortalProp
   );
 }
 
-function SidebarContent({ role, onNavigate }: { role: Role; onNavigate: (sectionId: string) => void }) {
+function SidebarContent({
+  role,
+  collapsed,
+  onNavigate,
+  onToggleCollapse
+}: {
+  role: Role;
+  collapsed: boolean;
+  onNavigate: (sectionId: string) => void;
+  onToggleCollapse?: () => void;
+}) {
   const navItems = [
     { label: "Dashboard", sectionId: "dashboard", icon: LayoutDashboard },
     { label: "Goals", sectionId: role === "employee" ? "goals" : "dashboard", icon: ClipboardList },
@@ -491,14 +514,29 @@ function SidebarContent({ role, onNavigate }: { role: Role; onNavigate: (section
 
   return (
     <div className="flex h-full min-h-0 flex-col">
-      <div className="mb-8 flex items-center gap-3 px-2">
-        <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-primary text-primary-foreground">
-          <LayoutDashboard className="h-5 w-5" />
+      <div className={cn("mb-8 flex items-center gap-3 px-2", collapsed && "flex-col px-0")}>
+        <div className={cn("flex min-w-0 items-center gap-3", collapsed && "flex-col")}>
+          <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-primary text-primary-foreground">
+            <LayoutDashboard className="h-5 w-5" />
+          </div>
+          <div className={cn("min-w-0", collapsed && "hidden")}>
+            <p className="font-semibold">GoalOS</p>
+            <p className="text-xs text-muted-foreground">Hackathon MVP</p>
+          </div>
         </div>
-        <div>
-          <p className="font-semibold">GoalOS</p>
-          <p className="text-xs text-muted-foreground">Hackathon MVP</p>
-        </div>
+        {onToggleCollapse ? (
+          <Button
+            type="button"
+            variant="outline"
+            size="icon"
+            className={cn("ml-auto h-8 w-8 shrink-0", collapsed && "ml-0")}
+            aria-label={collapsed ? "Expand sidebar" : "Collapse sidebar"}
+            title={collapsed ? "Expand sidebar" : "Collapse sidebar"}
+            onClick={onToggleCollapse}
+          >
+            {collapsed ? <ChevronRight className="h-4 w-4" /> : <ChevronLeft className="h-4 w-4" />}
+          </Button>
+        ) : null}
       </div>
 
       <nav className="grid gap-1 text-sm">
@@ -506,18 +544,24 @@ function SidebarContent({ role, onNavigate }: { role: Role; onNavigate: (section
           <button
             type="button"
             key={`${label}-${sectionId}`}
-            className="flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-left text-muted-foreground transition-colors hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            title={collapsed ? label : undefined}
+            className={cn(
+              "flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-left text-muted-foreground transition-colors hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+              collapsed && "justify-center px-0"
+            )}
             onClick={() => onNavigate(sectionId)}
           >
             <Icon className="h-4 w-4 shrink-0" />
-            <span>{label}</span>
+            <span className={cn(collapsed && "sr-only")}>{label}</span>
           </button>
         ))}
       </nav>
 
-      <div className="mt-auto rounded-xl border bg-muted/30 p-3 text-xs text-muted-foreground">
-        <p className="font-medium text-foreground">Current role</p>
-        <p className="mt-1 capitalize">{role === "admin" ? "Admin / HR" : role}</p>
+      <div className="mt-auto grid gap-3">
+        <div className={cn("rounded-xl border bg-muted/30 p-3 text-xs text-muted-foreground", collapsed && "p-2 text-center")}>
+          <p className={cn("font-medium text-foreground", collapsed && "sr-only")}>Current role</p>
+          <p className={cn("mt-1 capitalize", collapsed && "mt-0 text-[10px]")}>{role === "admin" ? (collapsed ? "HR" : "Admin / HR") : role}</p>
+        </div>
       </div>
     </div>
   );
