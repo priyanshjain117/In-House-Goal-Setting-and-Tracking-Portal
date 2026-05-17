@@ -4,6 +4,10 @@ import { calculateProgressPercent } from "@/lib/domain/progress";
 import type {
   AchievementFormValues,
   AchievementUpdate,
+  EscalationItem,
+  EscalationSeverity,
+  EscalationStatus,
+  EscalationType,
   Goal,
   GoalFormValues,
   GoalProgressStatus,
@@ -17,6 +21,7 @@ import type {
   Role,
   User
 } from "@/lib/domain/types";
+import { isMissingEscalationRelation, toEscalation } from "@/lib/escalations/service";
 import { notifyGoalDecision, notifyGoalSubmitted, notifyQuarterlyCheckInReminder } from "@/lib/notifications/service";
 import { createClient } from "@/lib/supabase/server";
 
@@ -80,6 +85,24 @@ type NotificationRow = {
   cta_href: string | null;
   read_at: string | null;
   created_at: string;
+};
+
+type EscalationRow = {
+  id: string;
+  escalation_type: EscalationType;
+  status: EscalationStatus;
+  severity: EscalationSeverity;
+  employee_id: string | null;
+  manager_id: string | null;
+  goal_id: string | null;
+  quarter: Quarter | null;
+  title: string;
+  detail: string;
+  due_at: string;
+  triggered_at: string;
+  resolved_at: string | null;
+  last_evaluated_at: string;
+  dedupe_key: string;
 };
 
 function toGoal(row: GoalRow): Goal {
@@ -167,13 +190,15 @@ export async function loadWorkspace() {
     { data: userRows, error: usersError },
     { data: reviewRows, error: reviewsError },
     { data: achievementRows, error: achievementsError },
-    { data: notificationRows, error: notificationsError }
+    { data: notificationRows, error: notificationsError },
+    { data: escalationRows, error: escalationsError }
   ] = await Promise.all([
     supabase.from("goals").select("*").order("created_at", { ascending: true }),
     supabase.from("users").select("id, name, email, role, manager_id, created_at").order("created_at"),
     supabase.from("manager_reviews").select("*").order("created_at", { ascending: true }),
     supabase.from("achievement_updates").select("*").order("updated_at", { ascending: false }),
-    supabase.from("notifications").select("*").order("created_at", { ascending: false }).limit(12)
+    supabase.from("notifications").select("*").order("created_at", { ascending: false }).limit(12),
+    supabase.from("escalations").select("*").order("triggered_at", { ascending: false }).limit(100)
   ]);
 
   if (goalsError) throw new Error(goalsError.message);
@@ -181,13 +206,15 @@ export async function loadWorkspace() {
   if (reviewsError) throw new Error(reviewsError.message);
   if (achievementsError) throw new Error(achievementsError.message);
   if (notificationsError && !isMissingRelation(notificationsError)) throw new Error(notificationsError.message);
+  if (escalationsError && !isMissingEscalationRelation(escalationsError)) throw new Error(escalationsError.message);
 
   return {
     goals: (goalRows ?? []).map((row) => toGoal(row as GoalRow)),
     users: (userRows ?? []).map((row) => toUser(row as UserRow)),
     reviews: (reviewRows ?? []).map((row) => toReview(row as ReviewRow)),
     achievements: (achievementRows ?? []).map((row) => toAchievement(row as AchievementRow)),
-    notifications: (notificationRows ?? []).map((row) => toNotification(row as NotificationRow))
+    notifications: (notificationRows ?? []).map((row) => toNotification(row as NotificationRow)),
+    escalations: (escalationRows ?? []).map((row) => toEscalation(row as EscalationRow)) satisfies EscalationItem[]
   };
 }
 

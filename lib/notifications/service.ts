@@ -5,7 +5,7 @@ import type { Goal, Quarter, User } from "@/lib/domain/types";
 import { createClient } from "@/lib/supabase/server";
 import { getSupabaseConfig } from "@/lib/supabase/config";
 import { sendMail } from "./mailer";
-import { buildWorkflowEmail, type NotificationEventType } from "./templates";
+import { buildEscalationEmail, buildWorkflowEmail, type NotificationEventType } from "./templates";
 
 type NotificationClient = SupabaseClient;
 
@@ -24,7 +24,8 @@ const eventSubjects: Record<NotificationEventType, string> = {
   goal_submitted: "Goal Sheet Submitted",
   goals_approved: "Goals Approved",
   goals_rejected: "Goals Returned for Rework",
-  quarterly_checkin_reminder: "Quarterly Check-in Reminder"
+  quarterly_checkin_reminder: "Quarterly Check-in Reminder",
+  escalation_alert: "GoalOS Escalation Alert"
 };
 
 function appUrl(path: string) {
@@ -292,6 +293,58 @@ export async function notifyQuarterlyCheckInReminder(actorId: string, employeeId
       ctaHref,
       ctaLabel: "Complete Check-in",
       note: "Please update actual achievement, progress status, and employee comments for the pending goals."
+    })
+  });
+}
+
+export async function notifyEscalationAlert(
+  actorId: string,
+  recipientId: string,
+  input: {
+    title: string;
+    detail: string;
+    severity: string;
+    status: string;
+    dueAt: string;
+    triggeredAt: string;
+    dedupeKey: string;
+  }
+) {
+  const client = await getNotificationClient();
+  const recipient = await getUser(client, recipientId);
+  const ctaHref = appUrl("/admin#escalations");
+  const dedupeKey = `escalation_alert:${recipientId}:${input.dedupeKey}`;
+
+  await insertNotification(client, {
+    recipientId,
+    actorId,
+    eventType: "escalation_alert",
+    title: input.title,
+    message: input.detail,
+    ctaHref,
+    dedupeKey,
+    metadata: {
+      severity: input.severity,
+      status: input.status,
+      dueAt: input.dueAt
+    }
+  });
+
+  return sendEmail(client, {
+    recipientId,
+    to: recipient.email,
+    eventType: "escalation_alert",
+    subject: `${eventSubjects.escalation_alert}: ${input.title}`,
+    dedupeKey,
+    html: buildEscalationEmail({
+      recipientName: recipient.name,
+      title: input.title,
+      detail: input.detail,
+      severity: input.severity,
+      status: input.status,
+      dueAt: input.dueAt,
+      triggeredAt: input.triggeredAt,
+      ctaHref
     })
   });
 }

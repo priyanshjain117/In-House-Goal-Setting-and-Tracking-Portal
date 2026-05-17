@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { getCurrentProfile } from "@/lib/auth";
 import type { Goal } from "@/lib/domain/types";
+import { resolveEscalation, syncEscalations } from "@/lib/escalations/service";
 import {
   decideGoals,
   deleteGoal,
@@ -57,6 +58,12 @@ export async function POST(request: Request) {
         return NextResponse.json(await sendQuarterlyCheckInReminders(profile.id, body.quarter));
       case "markNotificationsRead":
         return NextResponse.json(await markNotificationsRead(body.notificationIds ?? []));
+      case "syncEscalations":
+        if (profile.role !== "admin") return NextResponse.json({ error: "Admin access required." }, { status: 403 });
+        return NextResponse.json(await syncEscalations(profile.id));
+      case "resolveEscalation":
+        if (profile.role !== "admin") return NextResponse.json({ error: "Admin access required." }, { status: 403 });
+        return NextResponse.json(await resolveEscalation(body.escalationId, profile.id));
       case "pushSharedGoal":
         return NextResponse.json(await pushSharedGoal(body.ownerIds, profile.id));
       case "unlockGoal":

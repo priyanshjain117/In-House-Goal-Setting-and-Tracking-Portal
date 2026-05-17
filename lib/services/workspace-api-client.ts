@@ -1,6 +1,6 @@
 "use client";
 
-import type { AchievementFormValues, AchievementUpdate, Goal, GoalFormValues, ManagerReview, NotificationItem, Quarter, User } from "@/lib/domain/types";
+import type { AchievementFormValues, AchievementUpdate, EscalationItem, Goal, GoalFormValues, ManagerReview, NotificationItem, Quarter, User } from "@/lib/domain/types";
 
 type Workspace = {
   users: User[];
@@ -8,6 +8,7 @@ type Workspace = {
   reviews: ManagerReview[];
   achievements: AchievementUpdate[];
   notifications: NotificationItem[];
+  escalations: EscalationItem[];
 };
 
 async function workspaceRequest<T>(payload?: Record<string, unknown>): Promise<T> {
@@ -68,6 +69,16 @@ export function sendQuarterlyCheckInReminders(quarter: Quarter) {
 
 export function markNotificationsRead(notificationIds: string[]) {
   return workspaceRequest<NotificationItem[]>({ action: "markNotificationsRead", notificationIds });
+}
+
+export function syncEscalations() {
+  return workspaceRequest<{ escalations: EscalationItem[]; created: number; resolved: number; evaluated: number; changed: EscalationItem[] }>({
+    action: "syncEscalations"
+  });
+}
+
+export function resolveEscalation(escalationId: string) {
+  return workspaceRequest<EscalationItem>({ action: "resolveEscalation", escalationId });
 }
 
 export function pushSharedGoal(ownerIds: string[]) {

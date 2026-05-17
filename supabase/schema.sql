@@ -169,6 +169,34 @@ create table if not exists public.email_logs (
   updated_at timestamptz not null default now()
 );
 
+create table if not exists public.escalations (
+  id uuid primary key default gen_random_uuid(),
+  escalation_type text not null check (escalation_type in ('goal_submission_delay', 'approval_delay', 'quarterly_checkin_delay')),
+  status text not null default 'pending' check (status in ('pending', 'escalated', 'overdue', 'resolved')),
+  severity text not null default 'medium' check (severity in ('medium', 'high', 'critical')),
+  employee_id uuid references public.users(id) on delete cascade,
+  manager_id uuid references public.users(id) on delete set null,
+  goal_id uuid references public.goals(id) on delete cascade,
+  quarter public.goal_quarter,
+  title text not null,
+  detail text not null,
+  due_at timestamptz not null,
+  triggered_at timestamptz not null default now(),
+  resolved_at timestamptz,
+  last_evaluated_at timestamptz not null default now(),
+  dedupe_key text unique not null,
+  metadata jsonb not null default '{}'::jsonb
+);
+
+create table if not exists public.escalation_logs (
+  id uuid primary key default gen_random_uuid(),
+  escalation_id uuid references public.escalations(id) on delete cascade,
+  actor_id uuid references public.users(id) on delete set null,
+  event_type text not null,
+  message text not null,
+  created_at timestamptz not null default now()
+);
+
 create index if not exists users_manager_id_idx on public.users(manager_id);
 create index if not exists goals_employee_status_idx on public.goals(employee_id, status);
 create index if not exists goals_created_at_idx on public.goals(created_at);
@@ -186,6 +214,10 @@ create index if not exists notifications_recipient_created_idx on public.notific
 create index if not exists notifications_unread_idx on public.notifications(recipient_id, read_at) where read_at is null;
 create index if not exists email_logs_recipient_created_idx on public.email_logs(recipient_id, created_at desc);
 create index if not exists email_logs_event_status_idx on public.email_logs(event_type, status);
+create index if not exists escalations_status_due_idx on public.escalations(status, due_at);
+create index if not exists escalations_employee_idx on public.escalations(employee_id);
+create index if not exists escalations_manager_idx on public.escalations(manager_id);
+create index if not exists escalation_logs_escalation_idx on public.escalation_logs(escalation_id, created_at desc);
 
 create or replace function public.set_updated_at()
 returns trigger
@@ -291,6 +323,8 @@ alter table public.progress_snapshots enable row level security;
 alter table public.audit_logs enable row level security;
 alter table public.notifications enable row level security;
 alter table public.email_logs enable row level security;
+alter table public.escalations enable row level security;
+alter table public.escalation_logs enable row level security;
 
 drop policy if exists "Users can read self team and admin profiles" on public.users;
 create policy "Users can read self team and admin profiles"
@@ -577,5 +611,36 @@ on public.email_logs for update
 to authenticated
 using (true)
 with check (true);
+
+drop policy if exists "Admins manage escalations" on public.escalations;
+create policy "Admins manage escalations"
+on public.escalations for all
+to authenticated
+using (public.current_user_role() = 'admin')
+with check (public.current_user_role() = 'admin');
+
+drop policy if exists "Managers read team escalations" on public.escalations;
+create policy "Managers read team escalations"
+on public.escalations for select
+to authenticated
+using (manager_id = auth.uid());
+
+drop policy if exists "Employees read own escalations" on public.escalations;
+create policy "Employees read own escalations"
+on public.escalations for select
+to authenticated
+using (employee_id = auth.uid());
+
+drop policy if exists "Admins read escalation logs" on public.escalation_logs;
+create policy "Admins read escalation logs"
+on public.escalation_logs for select
+to authenticated
+using (public.current_user_role() = 'admin');
+
+drop policy if exists "Admins create escalation logs" on public.escalation_logs;
+create policy "Admins create escalation logs"
+on public.escalation_logs for insert
+to authenticated
+with check (public.current_user_role() = 'admin');
 
 notify pgrst, 'reload schema';

@@ -15,10 +15,11 @@ import {
   Users,
   X
 } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { GoalFormDialog } from "@/components/goals/goal-form-dialog";
 import { logoutAction } from "@/app/login/actions";
 import { AchievementTracking } from "@/components/dashboard/achievement-tracking";
+import { EscalationDashboard } from "@/components/escalations/escalation-dashboard";
 import { NotificationMenu } from "@/components/notifications/notification-menu";
 import { VisualDashboard } from "@/components/dashboard/visual-dashboard";
 import { Button } from "@/components/ui/button";
@@ -28,7 +29,7 @@ import { Progress } from "@/components/ui/progress";
 import { Textarea } from "@/components/ui/textarea";
 import { Toast, ToastDescription, ToastProvider, ToastTitle, ToastViewport } from "@/components/ui/toast";
 import { MAX_GOALS, isEmployeeEditableStatus, validateGoalSet } from "@/lib/domain/goal-validation";
-import type { AchievementFormValues, AchievementUpdate, AuthProfile, Goal, GoalFormValues, ManagerReview, NotificationItem, Quarter, Role, User } from "@/lib/domain/types";
+import type { AchievementFormValues, AchievementUpdate, AuthProfile, EscalationItem, Goal, GoalFormValues, ManagerReview, NotificationItem, Quarter, Role, User } from "@/lib/domain/types";
 import { cn } from "@/lib/utils";
 import {
   decideGoals,
@@ -37,8 +38,10 @@ import {
   loadWorkspace,
   markNotificationsRead,
   pushSharedGoal,
+  resolveEscalation,
   sendQuarterlyCheckInReminders,
   submitGoals as submitWorkspaceGoals,
+  syncEscalations,
   unlockGoal,
   updateGoal,
   updateGoalFields,
@@ -75,12 +78,16 @@ export function GoalPortal({ initialRole = "employee", profile }: GoalPortalProp
   const [reviews, setReviews] = useState<ManagerReview[]>([]);
   const [achievements, setAchievements] = useState<AchievementUpdate[]>([]);
   const [notifications, setNotifications] = useState<NotificationItem[]>([]);
+  const [escalations, setEscalations] = useState<EscalationItem[]>([]);
   const [loaded, setLoaded] = useState(false);
   const [startupError, setStartupError] = useState<string | null>(null);
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editingGoal, setEditingGoal] = useState<Goal | null>(null);
   const [savingGoal, setSavingGoal] = useState(false);
   const [submittingGoals, setSubmittingGoals] = useState(false);
+  const [syncingEscalations, setSyncingEscalations] = useState(false);
+  const [resolvingEscalationId, setResolvingEscalationId] = useState<string | null>(null);
+  const [escalationsSynced, setEscalationsSynced] = useState(false);
   const [toast, setToast] = useState<{ title: string; description: string } | null>(null);
 
   useEffect(() => {
@@ -95,6 +102,7 @@ export function GoalPortal({ initialRole = "employee", profile }: GoalPortalProp
         setAchievements(workspace.achievements);
         setUsers(workspace.users);
         setNotifications(workspace.notifications);
+        setEscalations(workspace.escalations);
       } catch (error) {
         if (!isMounted) return;
         setGoals([]);
@@ -102,6 +110,7 @@ export function GoalPortal({ initialRole = "employee", profile }: GoalPortalProp
         setReviews([]);
         setAchievements([]);
         setNotifications([]);
+        setEscalations([]);
         setStartupError(error instanceof Error ? error.message : "Unable to load workspace data.");
       } finally {
         if (isMounted) setLoaded(true);
@@ -121,14 +130,14 @@ export function GoalPortal({ initialRole = "employee", profile }: GoalPortalProp
   const activeSubmissionGoals = employeeGoals.filter((goal) => !goal.locked && goal.status !== "approved");
   const validation = validateGoalSet(activeSubmissionGoals);
 
-  function notify(title: string, description: string) {
+  const notify = useCallback((title: string, description: string) => {
     setToast({ title, description });
-  }
+  }, []);
 
-  async function refreshNotifications() {
+  const refreshNotifications = useCallback(async () => {
     const workspace = await loadWorkspace();
     setNotifications(workspace.notifications);
-  }
+  }, []);
 
   function navigateToSection(sectionId: string) {
     document.getElementById(sectionId)?.scrollIntoView({ behavior: "smooth", block: "start" });
@@ -234,6 +243,44 @@ export function GoalPortal({ initialRole = "employee", profile }: GoalPortalProp
     const updatedNotifications = await markNotificationsRead(notificationIds);
     const updatedById = new Map(updatedNotifications.map((notification) => [notification.id, notification]));
     setNotifications((current) => current.map((notification) => updatedById.get(notification.id) ?? notification));
+  }
+
+  const runEscalationSync = useCallback(async (showToast = true) => {
+    setSyncingEscalations(true);
+    try {
+      const result = await syncEscalations();
+      setEscalations(result.escalations);
+      await refreshNotifications();
+      if (showToast) {
+        notify(
+          "Escalations synced",
+          `${result.created} created, ${result.resolved} resolved, ${result.evaluated} active rule hit${result.evaluated === 1 ? "" : "s"}.`
+        );
+      }
+    } catch (error) {
+      notify("Escalation sync failed", error instanceof Error ? error.message : "Please try again.");
+    } finally {
+      setSyncingEscalations(false);
+    }
+  }, [notify, refreshNotifications]);
+
+  useEffect(() => {
+    if (!loaded || role !== "admin" || escalationsSynced) return;
+    setEscalationsSynced(true);
+    void runEscalationSync(false);
+  }, [escalationsSynced, loaded, role, runEscalationSync]);
+
+  async function resolveEscalationItem(escalationId: string) {
+    setResolvingEscalationId(escalationId);
+    try {
+      const resolved = await resolveEscalation(escalationId);
+      setEscalations((current) => current.map((item) => (item.id === resolved.id ? resolved : item)));
+      notify("Escalation resolved", "The governance register has been updated.");
+    } catch (error) {
+      notify("Resolve failed", error instanceof Error ? error.message : "Please try again.");
+    } finally {
+      setResolvingEscalationId(null);
+    }
   }
 
   if (!loaded) {
@@ -417,6 +464,18 @@ export function GoalPortal({ initialRole = "employee", profile }: GoalPortalProp
                 <AdminDashboard goals={goals} users={users} reviews={reviews} setGoals={setGoals} notify={notify} />
               </div>
             ) : null}
+            {role === "admin" ? (
+              <div id="escalations" className="scroll-mt-24">
+                <EscalationDashboard
+                  escalations={escalations}
+                  users={users}
+                  syncing={syncingEscalations}
+                  resolvingId={resolvingEscalationId}
+                  onSync={() => runEscalationSync(true)}
+                  onResolve={resolveEscalationItem}
+                />
+              </div>
+            ) : null}
             <div id="tracking" className="scroll-mt-24">
               <AchievementTracking
                 role={role}
@@ -467,7 +526,8 @@ function SidebarContent({
     { label: "Goals", sectionId: role === "employee" ? "goals" : "dashboard", icon: ClipboardList },
     { label: "Reviews", sectionId: role === "manager" ? "reviews" : "tracking", icon: CheckCircle2 },
     { label: "Tracking", sectionId: "tracking", icon: Users },
-    { label: "Governance", sectionId: role === "admin" ? "governance" : "dashboard", icon: ShieldCheck }
+    { label: "Governance", sectionId: role === "admin" ? "governance" : "dashboard", icon: ShieldCheck },
+    { label: "Escalations", sectionId: role === "admin" ? "escalations" : "dashboard", icon: AlertCircle }
   ];
 
   return (

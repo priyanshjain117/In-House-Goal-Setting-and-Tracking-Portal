@@ -110,3 +110,15 @@ GoalOS sends enterprise-style workflow notifications through Gmail SMTP and Node
 - Manager/Admin sends quarterly reminders -> employees with pending check-ins get `Quarterly Check-in Reminder`; the sender is copied on the email.
 
 Each event also creates a lightweight in-app notification shown in the header bell. Email attempts use a `dedupe_key` in `email_logs` to prevent duplicate sends during repeat clicks or retries.
+
+## Escalation Governance
+
+Admin/HR gets an escalation command center for overdue workflow actions:
+
+- Goal submission delay after the goal-setting due date.
+- Manager approval delay for submitted plans past the approval window.
+- Quarterly check-in delay for approved goals missing the latest due check-in.
+
+The module is intentionally lightweight: no cron jobs or queues. Admin syncs rules on demand from the dashboard, and the app records active/resolved items in `escalations` plus history in `escalation_logs`.
+
+If your database was created before this module, run the latest `supabase/schema.sql` in the Supabase SQL Editor. It uses `create table if not exists`, so it adds escalation tables without resetting existing users, goals, reviews, achievements, notifications, or email logs.

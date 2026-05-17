@@ -86,7 +86,7 @@ export interface AchievementFormValues {
   managerComment: string;
 }
 
-export type NotificationEventType = "goal_submitted" | "goals_approved" | "goals_rejected" | "quarterly_checkin_reminder";
+export type NotificationEventType = "goal_submitted" | "goals_approved" | "goals_rejected" | "quarterly_checkin_reminder" | "escalation_alert";
 
 export interface NotificationItem {
   id: string;
@@ -97,5 +97,36 @@ export interface NotificationItem {
   message: string;
   ctaHref: string | null;
   readAt: string | null;
+  createdAt: string;
+}
+
+export type EscalationType = "goal_submission_delay" | "approval_delay" | "quarterly_checkin_delay";
+export type EscalationStatus = "pending" | "escalated" | "overdue" | "resolved";
+export type EscalationSeverity = "medium" | "high" | "critical";
+
+export interface EscalationItem {
+  id: string;
+  escalationType: EscalationType;
+  status: EscalationStatus;
+  severity: EscalationSeverity;
+  employeeId: string | null;
+  managerId: string | null;
+  goalId: string | null;
+  quarter: Quarter | null;
+  title: string;
+  detail: string;
+  dueAt: string;
+  triggeredAt: string;
+  resolvedAt: string | null;
+  lastEvaluatedAt: string;
+  dedupeKey: string;
+}
+
+export interface EscalationLog {
+  id: string;
+  escalationId: string | null;
+  actorId: string | null;
+  eventType: string;
+  message: string;
   createdAt: string;
 }
