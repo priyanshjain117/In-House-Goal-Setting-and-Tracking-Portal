@@ -3,7 +3,7 @@ import { LoginForm } from "./login-form";
 export default function LoginPage() {
   return (
     <main className="min-h-screen bg-background">
-      <div className="grid min-h-screen lg:grid-cols-[1fr_480px]">
+      <div className="grid min-h-screen lg:grid-cols-[1fr_560px]">
         <section className="hidden bg-slate-950 px-10 py-12 text-white lg:flex lg:flex-col lg:justify-between">
           <div>
             <p className="text-sm font-medium text-cyan-200">GoalOS</p>
@@ -21,7 +21,7 @@ export default function LoginPage() {
             ))}
           </div>
         </section>
-        <section className="flex items-center justify-center px-4 py-10">
+        <section className="flex items-center justify-center px-4 py-10 sm:px-6">
           <LoginForm />
         </section>
       </div>
