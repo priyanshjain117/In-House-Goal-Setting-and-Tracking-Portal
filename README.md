@@ -32,15 +32,13 @@ NEXT_PUBLIC_SUPABASE_ANON_KEY=...
 SUPABASE_SERVICE_ROLE_KEY=...
 ```
 
-`SUPABASE_SERVICE_ROLE_KEY` is only used server-side by the login page setup button to create demo Auth users. Do not expose it with a `NEXT_PUBLIC_` prefix.
+`SUPABASE_SERVICE_ROLE_KEY` is only used by the local seed script to create demo Auth users and database rows. Do not expose it with a `NEXT_PUBLIC_` prefix.
 
 4. Seed demo Auth users and role rows:
 
 ```bash
 npm run db:seed
 ```
-
-You can also click **Create demo accounts** on `/login`; both paths use the same existing env values and do not modify env files.
 
 5. Start the app and open `/login`.
 6. Sign in with:
@@ -60,11 +58,21 @@ After login, users are redirected by role:
 ## Auth Architecture
 
 - `middleware.ts` refreshes Supabase sessions and protects `/employee`, `/manager`, and `/admin`.
-- `lib/supabase/client.ts` is for client components.
-- `lib/supabase/server.ts` is for server components and actions.
+- Dashboard screens fetch workspace data through `app/api/workspace/route.ts`.
+- `lib/services/workspace-api-client.ts` is the frontend API client. It does not contain demo records.
+- `lib/services/workspace-repository.ts` is the server-side Supabase repository used by the API route.
+- `lib/supabase/server.ts` creates authenticated server Supabase clients from the active session cookies.
 - `lib/auth.ts` centralizes profile loading and role redirects.
-- `app/login/actions.ts` handles login, logout, and demo account creation.
+- `app/login/actions.ts` handles login and logout.
 - Roles live in `public.users.role` and are enforced with RLS policies.
+
+## Demo Data Architecture
+
+The demo follows `Frontend -> Next API -> Supabase`.
+
+- Frontend components render only API responses and user-entered form state.
+- Workspace records are read from Supabase tables: `users`, `goals`, `manager_reviews`, and `achievement_updates`.
+- `npm run db:seed` inserts the hackathon demo records into Supabase; the app runtime has no localStorage/mock JSON fallback.
 
 ## Schema Cache Fix
 

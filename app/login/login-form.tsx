@@ -2,22 +2,14 @@
 
 import { useActionState } from "react";
 import { Loader2, ShieldCheck } from "lucide-react";
-import { loginAction, seedDemoAccountsAction } from "./actions";
+import { loginAction } from "./actions";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 
-const demos = [
-  ["Employee", "employee@demo.com", "Employee123"],
-  ["Team Employee", "nisha@demo.com", "Employee123"],
-  ["Manager", "manager@demo.com", "Manager123"],
-  ["Admin/HR", "admin@demo.com", "Admin123"]
-];
-
 export function LoginForm() {
   const [loginState, loginFormAction, isLoggingIn] = useActionState(loginAction, {});
-  const [seedState, seedFormAction, isSeeding] = useActionState(seedDemoAccountsAction, {});
 
   return (
     <Card className="w-full max-w-md shadow-soft">
@@ -48,22 +40,10 @@ export function LoginForm() {
         </form>
 
         <div className="rounded-lg border bg-muted/40 p-3">
-          <p className="text-sm font-medium">Demo accounts</p>
-          <div className="mt-2 grid gap-1 text-xs text-muted-foreground">
-            {demos.map(([label, email, password]) => (
-              <p key={email}>
-                {label}: {email} / {password}
-              </p>
-            ))}
-          </div>
-          <form action={seedFormAction} className="mt-3">
-            <Button type="submit" variant="outline" className="w-full" disabled={isSeeding}>
-              {isSeeding ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
-              Create demo accounts
-            </Button>
-          </form>
-          {seedState.error ? <p className="mt-2 text-xs text-destructive">{seedState.error}</p> : null}
-          {!seedState.error && !isSeeding ? <p className="mt-2 text-xs text-muted-foreground">Requires server role key for local setup.</p> : null}
+          <p className="text-sm font-medium">Demo setup</p>
+          <p className="mt-2 text-xs text-muted-foreground">
+            Demo users and workspace records are loaded from Supabase. Run the seed script once, then sign in with a seeded account.
+          </p>
         </div>
       </CardContent>
     </Card>

@@ -1,4 +1,4 @@
-"use client";
+import "server-only";
 
 import { calculateProgressPercent } from "@/lib/domain/progress";
 import type {
@@ -15,7 +15,7 @@ import type {
   Role,
   User
 } from "@/lib/domain/types";
-import { createClient } from "@/lib/supabase/client";
+import { createClient } from "@/lib/supabase/server";
 
 type GoalRow = {
   id: string;
@@ -30,9 +30,7 @@ type GoalRow = {
   target: string;
   weightage: number | string;
   status: GoalStatus;
-  approved: boolean;
   locked: boolean;
-  manager_comment: string | null;
   created_at: string;
   updated_at?: string;
 };
@@ -129,20 +127,19 @@ function toAchievement(row: AchievementRow): AchievementUpdate {
   };
 }
 
-export async function loadSupabaseWorkspace() {
-  const supabase = createClient();
+export async function loadWorkspace() {
+  const supabase = await createClient();
   const [
     { data: goalRows, error: goalsError },
     { data: userRows, error: usersError },
     { data: reviewRows, error: reviewsError },
     { data: achievementRows, error: achievementsError }
-  ] =
-    await Promise.all([
-      supabase.from("goals").select("*").order("created_at", { ascending: true }),
-      supabase.from("users").select("id, name, email, role, manager_id, created_at").order("created_at"),
-      supabase.from("manager_reviews").select("*").order("created_at", { ascending: true }),
-      supabase.from("achievement_updates").select("*").order("updated_at", { ascending: false })
-    ]);
+  ] = await Promise.all([
+    supabase.from("goals").select("*").order("created_at", { ascending: true }),
+    supabase.from("users").select("id, name, email, role, manager_id, created_at").order("created_at"),
+    supabase.from("manager_reviews").select("*").order("created_at", { ascending: true }),
+    supabase.from("achievement_updates").select("*").order("updated_at", { ascending: false })
+  ]);
 
   if (goalsError) throw new Error(goalsError.message);
   if (usersError) throw new Error(usersError.message);
@@ -157,8 +154,8 @@ export async function loadSupabaseWorkspace() {
   };
 }
 
-export async function insertSupabaseGoal(ownerId: string, values: GoalFormValues) {
-  const supabase = createClient();
+export async function insertGoal(ownerId: string, values: GoalFormValues) {
+  const supabase = await createClient();
   const { data, error } = await supabase
     .from("goals")
     .insert({
@@ -178,8 +175,92 @@ export async function insertSupabaseGoal(ownerId: string, values: GoalFormValues
   return toGoal(data as GoalRow);
 }
 
-export async function pushSupabaseSharedGoal(ownerIds: string[], primaryOwnerId: string) {
-  const supabase = createClient();
+export async function updateGoal(goalId: string, values: GoalFormValues) {
+  const supabase = await createClient();
+  const { data, error } = await supabase
+    .from("goals")
+    .update({
+      thrust_area: values.thrustArea,
+      title: values.title,
+      description: values.description,
+      uom: values.uom,
+      goal_type: values.goalType,
+      target: values.target,
+      weightage: values.weightage
+    })
+    .eq("id", goalId)
+    .select("*")
+    .single();
+
+  if (error) throw new Error(error.message);
+  return toGoal(data as GoalRow);
+}
+
+export async function deleteGoal(goalId: string) {
+  const supabase = await createClient();
+  const { error } = await supabase.from("goals").delete().eq("id", goalId);
+  if (error) throw new Error(error.message);
+}
+
+export async function submitGoals(ownerId: string) {
+  const supabase = await createClient();
+  const { data, error } = await supabase
+    .from("goals")
+    .update({ status: "submitted" })
+    .eq("employee_id", ownerId)
+    .in("status", ["draft", "rejected"])
+    .select("*");
+
+  if (error) throw new Error(error.message);
+  return (data ?? []).map((row) => toGoal(row as GoalRow));
+}
+
+export async function updateGoalFields(goalId: string, patch: Partial<Pick<Goal, "target" | "weightage">>) {
+  const supabase = await createClient();
+  const { data, error } = await supabase.from("goals").update(patch).eq("id", goalId).select("*").single();
+
+  if (error) throw new Error(error.message);
+  return toGoal(data as GoalRow);
+}
+
+export async function decideGoals(ownerId: string, managerId: string, status: "approved" | "rejected", comment: string) {
+  const supabase = await createClient();
+  const { data: updatedRows, error: updateError } = await supabase
+    .from("goals")
+    .update({
+      status,
+      approved: status === "approved",
+      locked: status === "approved",
+      manager_comment: comment
+    })
+    .eq("employee_id", ownerId)
+    .eq("status", "submitted")
+    .select("*");
+
+  if (updateError) throw new Error(updateError.message);
+
+  const reviewRows = (updatedRows ?? []).map((goal) => ({
+    goal_id: goal.id,
+    manager_id: managerId,
+    action: status,
+    comment
+  }));
+
+  let reviews: ManagerReview[] = [];
+  if (reviewRows.length) {
+    const { data, error } = await supabase.from("manager_reviews").insert(reviewRows).select("*");
+    if (error) throw new Error(error.message);
+    reviews = (data ?? []).map((row) => toReview(row as ReviewRow));
+  }
+
+  return {
+    goals: (updatedRows ?? []).map((row) => toGoal(row as GoalRow)),
+    reviews
+  };
+}
+
+export async function pushSharedGoal(ownerIds: string[], primaryOwnerId: string) {
+  const supabase = await createClient();
   const sharedGoalGroupId = crypto.randomUUID();
   const { data, error } = await supabase
     .from("goals")
@@ -203,94 +284,8 @@ export async function pushSupabaseSharedGoal(ownerIds: string[], primaryOwnerId:
   return (data ?? []).map((row) => toGoal(row as GoalRow));
 }
 
-export async function updateSupabaseGoal(goalId: string, values: GoalFormValues) {
-  const supabase = createClient();
-  const { data, error } = await supabase
-    .from("goals")
-    .update({
-      thrust_area: values.thrustArea,
-      title: values.title,
-      description: values.description,
-      uom: values.uom,
-      goal_type: values.goalType,
-      target: values.target,
-      weightage: values.weightage
-    })
-    .eq("id", goalId)
-    .select("*")
-    .single();
-
-  if (error) throw new Error(error.message);
-  return toGoal(data as GoalRow);
-}
-
-export async function deleteSupabaseGoal(goalId: string) {
-  const supabase = createClient();
-  const { error } = await supabase.from("goals").delete().eq("id", goalId);
-  if (error) throw new Error(error.message);
-}
-
-export async function submitSupabaseGoals(ownerId: string) {
-  const supabase = createClient();
-  const { data, error } = await supabase
-    .from("goals")
-    .update({ status: "submitted" })
-    .eq("employee_id", ownerId)
-    .in("status", ["draft", "rejected"])
-    .select("*");
-
-  if (error) throw new Error(error.message);
-  return (data ?? []).map((row) => toGoal(row as GoalRow));
-}
-
-export async function updateSupabaseGoalFields(goalId: string, patch: Partial<Pick<Goal, "target" | "weightage">>) {
-  const supabase = createClient();
-  const { data, error } = await supabase.from("goals").update(patch).eq("id", goalId).select("*").single();
-
-  if (error) throw new Error(error.message);
-  return toGoal(data as GoalRow);
-}
-
-export async function decideSupabaseGoals(ownerId: string, managerId: string, status: "approved" | "rejected", comment: string) {
-  const supabase = createClient();
-  const locked = status === "approved";
-  const { data: updatedRows, error: updateError } = await supabase
-    .from("goals")
-    .update({
-      status,
-      approved: status === "approved",
-      locked,
-      manager_comment: comment
-    })
-    .eq("employee_id", ownerId)
-    .eq("status", "submitted")
-    .select("*");
-
-  if (updateError) throw new Error(updateError.message);
-
-  const reviews = (updatedRows ?? []).map((goal) => ({
-    goal_id: goal.id,
-    manager_id: managerId,
-    action: status,
-    comment
-  }));
-
-  let insertedReviews: ManagerReview[] = [];
-
-  if (reviews.length) {
-    const { data: reviewRows, error: reviewError } = await supabase.from("manager_reviews").insert(reviews).select("*");
-    if (reviewError) throw new Error(reviewError.message);
-    insertedReviews = (reviewRows ?? []).map((row) => toReview(row as ReviewRow));
-  }
-
-  return {
-    goals: (updatedRows ?? []).map((row) => toGoal(row as GoalRow)),
-    reviews: insertedReviews
-  };
-}
-
-export async function unlockSupabaseGoal(goalId: string) {
-  const supabase = createClient();
+export async function unlockGoal(goalId: string) {
+  const supabase = await createClient();
   const { data, error } = await supabase
     .from("goals")
     .update({ locked: false, approved: false, status: "draft", manager_comment: null })
@@ -302,8 +297,8 @@ export async function unlockSupabaseGoal(goalId: string) {
   return toGoal(data as GoalRow);
 }
 
-export async function upsertSupabaseAchievement(goal: Goal, values: AchievementFormValues) {
-  const supabase = createClient();
+export async function upsertAchievement(goal: Goal, values: AchievementFormValues) {
+  const supabase = await createClient();
   const progressPercent = calculateProgressPercent(goal, values.actualValue, values.status);
   const { data, error } = await supabase
     .from("achievement_updates")

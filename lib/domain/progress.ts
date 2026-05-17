@@ -28,7 +28,8 @@ export function calculateProgressPercent(goal: Pick<Goal, "goalType" | "target" 
   const target = parseMeasurement(goal.target);
   const actual = parseMeasurement(actualValue);
 
-  if (!target || !actual || target <= 0 || actual < 0) return status === "completed" ? 100 : 0;
+  if (target === null || actual === null || target <= 0 || actual < 0) return status === "completed" ? 100 : 0;
+  if (goal.goalType === "max" && actual === 0) return 100;
 
   const raw = goal.goalType === "min" ? (actual / target) * 100 : (target / actual) * 100;
   return clampProgress(raw);

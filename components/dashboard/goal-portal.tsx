@@ -26,36 +26,21 @@ import { Input } from "@/components/ui/input";
 import { Progress } from "@/components/ui/progress";
 import { Textarea } from "@/components/ui/textarea";
 import { Toast, ToastDescription, ToastProvider, ToastTitle, ToastViewport } from "@/components/ui/toast";
-import { seedUsers } from "@/lib/data/seed";
 import { MAX_GOALS, isEmployeeEditableStatus, validateGoalSet } from "@/lib/domain/goal-validation";
 import type { AchievementFormValues, AchievementUpdate, AuthProfile, Goal, GoalFormValues, ManagerReview, Role, User } from "@/lib/domain/types";
 import { cn } from "@/lib/utils";
 import {
-  createGoal,
-  decideEmployeeGoals,
-  loadGoals,
-  loadReviews,
-  loadAchievements,
-  resetWorkspaceData,
-  saveAchievements,
-  saveGoals,
-  saveReviews,
-  submitEmployeeGoals,
+  decideGoals,
+  deleteGoal,
+  insertGoal,
+  loadWorkspace,
+  pushSharedGoal,
+  submitGoals as submitWorkspaceGoals,
+  unlockGoal,
   updateGoal,
+  updateGoalFields,
   upsertAchievement
-} from "@/lib/services/goal-service";
-import {
-  decideSupabaseGoals,
-  deleteSupabaseGoal,
-  insertSupabaseGoal,
-  loadSupabaseWorkspace,
-  pushSupabaseSharedGoal,
-  submitSupabaseGoals,
-  unlockSupabaseGoal,
-  upsertSupabaseAchievement,
-  updateSupabaseGoal,
-  updateSupabaseGoalFields
-} from "@/lib/services/supabase-goal-service";
+} from "@/lib/services/workspace-api-client";
 import { StatusBadge } from "./status-badge";
 
 const roleCopy: Record<Role, { title: string; subtitle: string }> = {
@@ -82,7 +67,7 @@ export function GoalPortal({ initialRole = "employee", profile }: GoalPortalProp
   const [role] = useState<Role>(initialRole);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
-  const [users, setUsers] = useState<User[]>(seedUsers);
+  const [users, setUsers] = useState<User[]>([]);
   const [goals, setGoals] = useState<Goal[]>([]);
   const [reviews, setReviews] = useState<ManagerReview[]>([]);
   const [achievements, setAchievements] = useState<AchievementUpdate[]>([]);
@@ -92,28 +77,22 @@ export function GoalPortal({ initialRole = "employee", profile }: GoalPortalProp
   const [editingGoal, setEditingGoal] = useState<Goal | null>(null);
   const [savingGoal, setSavingGoal] = useState(false);
   const [toast, setToast] = useState<{ title: string; description: string } | null>(null);
-  const useSupabase = Boolean(profile);
 
   useEffect(() => {
     let isMounted = true;
 
-    async function loadWorkspace() {
+    async function loadDatabaseWorkspace() {
       try {
-        if (useSupabase) {
-          const workspace = await loadSupabaseWorkspace();
-          if (!isMounted) return;
-          setGoals(workspace.goals);
-          setReviews(workspace.reviews);
-          setAchievements(workspace.achievements);
-          setUsers(workspace.users);
-        } else {
-          setGoals(loadGoals());
-          setReviews(loadReviews());
-          setAchievements(loadAchievements());
-        }
+        const workspace = await loadWorkspace();
+        if (!isMounted) return;
+        setGoals(workspace.goals);
+        setReviews(workspace.reviews);
+        setAchievements(workspace.achievements);
+        setUsers(workspace.users);
       } catch (error) {
         if (!isMounted) return;
         setGoals([]);
+        setUsers([]);
         setReviews([]);
         setAchievements([]);
         setStartupError(error instanceof Error ? error.message : "Unable to load workspace data.");
@@ -122,30 +101,18 @@ export function GoalPortal({ initialRole = "employee", profile }: GoalPortalProp
       }
     }
 
-    loadWorkspace();
+    loadDatabaseWorkspace();
 
     return () => {
       isMounted = false;
     };
-  }, [useSupabase]);
+  }, []);
 
-  const currentUser: User =
-    profile ??
-    (users.find((user) => user.role === role) as User) ??
-    (seedUsers.find((user) => user.role === role) as User);
-  const employee =
-    role === "employee" ? currentUser : users.find((user) => user.role === "employee") ?? (seedUsers.find((user) => user.role === "employee") as User);
-  const employeeGoals = goals.filter((goal) => goal.ownerId === employee.id);
-  const validation = validateGoalSet(employeeGoals);
-
-  function persist(nextGoals: Goal[]) {
-    try {
-      setGoals(nextGoals);
-      saveGoals(nextGoals);
-    } catch (error) {
-      notify("Unable to save", error instanceof Error ? error.message : "Please try again.");
-    }
-  }
+  const currentUser = profile ?? users.find((user) => user.role === role);
+  const employee = role === "employee" ? currentUser : users.find((user) => user.role === "employee");
+  const employeeGoals = employee ? goals.filter((goal) => goal.ownerId === employee.id) : [];
+  const activeSubmissionGoals = employeeGoals.filter((goal) => !goal.locked && goal.status !== "approved");
+  const validation = validateGoalSet(activeSubmissionGoals);
 
   function notify(title: string, description: string) {
     setToast({ title, description });
@@ -156,42 +123,8 @@ export function GoalPortal({ initialRole = "employee", profile }: GoalPortalProp
     setSidebarOpen(false);
   }
 
-  function createSharedDemoGoals(ownerIds: string[], primaryOwnerId: string) {
-    const sharedGoalGroupId = `sg_${crypto.randomUUID()}`;
-    const now = new Date().toISOString();
-    return ownerIds.map<Goal>((ownerId) => ({
-      id: `g_${crypto.randomUUID()}`,
-      ownerId,
-      sharedGoalGroupId,
-      primaryOwnerId,
-      thrustArea: "Capability Building",
-      title: "Employee Training Completion",
-      description: "Complete quarterly enablement certification for operating rhythm and governance practices.",
-      uom: "percentage",
-      goalType: "min",
-      target: "100%",
-      weightage: 10,
-      status: "draft",
-      locked: false,
-      createdAt: now,
-      updatedAt: now
-    }));
-  }
-
-  function resetDemoData() {
-    try {
-      resetWorkspaceData();
-      setGoals(loadGoals());
-      setReviews(loadReviews());
-      setAchievements(loadAchievements());
-      setStartupError(null);
-      notify("Workspace reset", "Demo data has been restored.");
-    } catch (error) {
-      notify("Reset failed", error instanceof Error ? error.message : "Please clear site data and reload.");
-    }
-  }
-
   async function saveGoal(values: GoalFormValues) {
+    if (!employee) return false;
     if (savingGoal) return false;
     setSavingGoal(true);
 
@@ -201,12 +134,8 @@ export function GoalPortal({ initialRole = "employee", profile }: GoalPortalProp
           editingGoal.sharedGoalGroupId && editingGoal.primaryOwnerId !== employee.id
             ? { ...editingGoal, weightage: values.weightage }
             : values;
-        if (useSupabase) {
-          const updatedGoal = await updateSupabaseGoal(editingGoal.id, nextValues);
-          setGoals((currentGoals) => currentGoals.map((goal) => (goal.id === updatedGoal.id ? updatedGoal : goal)));
-        } else {
-          persist(goals.map((goal) => (goal.id === editingGoal.id ? updateGoal(goal, nextValues) : goal)));
-        }
+        const updatedGoal = await updateGoal(editingGoal.id, nextValues);
+        setGoals((currentGoals) => currentGoals.map((goal) => (goal.id === updatedGoal.id ? updatedGoal : goal)));
         setDialogOpen(false);
         setEditingGoal(null);
         notify("Goal updated", "The draft goal has been saved.");
@@ -218,12 +147,8 @@ export function GoalPortal({ initialRole = "employee", profile }: GoalPortalProp
         return false;
       }
 
-      if (useSupabase) {
-        const newGoal = await insertSupabaseGoal(employee.id, values);
-        setGoals((currentGoals) => [...currentGoals, newGoal]);
-      } else {
-        persist([...goals, createGoal(employee.id, values)]);
-      }
+      const newGoal = await insertGoal(employee.id, values);
+      setGoals((currentGoals) => [...currentGoals, newGoal]);
       setDialogOpen(false);
       notify("Goal created", "The new goal is ready in draft.");
       return true;
@@ -237,12 +162,8 @@ export function GoalPortal({ initialRole = "employee", profile }: GoalPortalProp
 
   async function removeGoal(goalId: string) {
     try {
-      if (useSupabase) {
-        await deleteSupabaseGoal(goalId);
-        setGoals((currentGoals) => currentGoals.filter((goal) => goal.id !== goalId));
-      } else {
-        persist(goals.filter((goal) => goal.id !== goalId));
-      }
+      await deleteGoal(goalId);
+      setGoals((currentGoals) => currentGoals.filter((goal) => goal.id !== goalId));
       notify("Goal deleted", "The draft goal was removed.");
     } catch (error) {
       notify("Delete failed", error instanceof Error ? error.message : "Please try again.");
@@ -250,15 +171,12 @@ export function GoalPortal({ initialRole = "employee", profile }: GoalPortalProp
   }
 
   async function submitGoals() {
+    if (!employee) return;
     try {
-      if (useSupabase) {
-        const submittedGoals = await submitSupabaseGoals(employee.id);
-        setGoals((currentGoals) =>
-          currentGoals.map((goal) => submittedGoals.find((submittedGoal) => submittedGoal.id === goal.id) ?? goal)
-        );
-      } else {
-        persist(submitEmployeeGoals(goals, employee.id));
-      }
+      const submittedGoals = await submitWorkspaceGoals(employee.id);
+      setGoals((currentGoals) =>
+        currentGoals.map((goal) => submittedGoals.find((submittedGoal) => submittedGoal.id === goal.id) ?? goal)
+      );
       notify("Submitted for approval", "Your manager can now review these goals.");
     } catch (error) {
       notify("Submit failed", error instanceof Error ? error.message : "Please try again.");
@@ -267,19 +185,13 @@ export function GoalPortal({ initialRole = "employee", profile }: GoalPortalProp
 
   async function saveAchievement(goal: Goal, values: AchievementFormValues) {
     try {
-      if (useSupabase) {
-        const savedAchievement = await upsertSupabaseAchievement(goal, values);
-        setAchievements((currentAchievements) => {
-          const exists = currentAchievements.some((achievement) => achievement.id === savedAchievement.id);
-          return exists
-            ? currentAchievements.map((achievement) => (achievement.id === savedAchievement.id ? savedAchievement : achievement))
-            : [...currentAchievements, savedAchievement];
-        });
-      } else {
-        const nextAchievements = upsertAchievement(achievements, goal, values);
-        setAchievements(nextAchievements);
-        saveAchievements(nextAchievements);
-      }
+      const savedAchievement = await upsertAchievement(goal, values);
+      setAchievements((currentAchievements) => {
+        const exists = currentAchievements.some((achievement) => achievement.id === savedAchievement.id);
+        return exists
+          ? currentAchievements.map((achievement) => (achievement.id === savedAchievement.id ? savedAchievement : achievement))
+          : [...currentAchievements, savedAchievement];
+      });
 
       notify("Quarterly update saved", "Progress tracking has been updated.");
     } catch (error) {
@@ -303,6 +215,19 @@ export function GoalPortal({ initialRole = "employee", profile }: GoalPortalProp
           <div className="h-80 animate-pulse rounded-xl border bg-card" />
           <div className="h-80 animate-pulse rounded-xl border bg-card" />
         </div>
+      </div>
+    );
+  }
+
+  if (!currentUser || !employee) {
+    return (
+      <div className="min-h-screen bg-background p-6">
+        <Card className="border-amber-200 bg-amber-50">
+          <CardContent className="p-5">
+            <p className="font-medium text-amber-900">Workspace data is not available</p>
+            <p className="text-sm text-amber-800">Run the database seed and sign in with a demo account.</p>
+          </CardContent>
+        </Card>
       </div>
     );
   }
@@ -393,9 +318,6 @@ export function GoalPortal({ initialRole = "employee", profile }: GoalPortalProp
                     <p className="font-medium text-amber-900">Workspace data could not be loaded</p>
                     <p className="text-sm text-amber-800">{startupError}</p>
                   </div>
-                  <Button type="button" variant="outline" onClick={resetDemoData}>
-                    Reset demo data
-                  </Button>
                 </CardContent>
               </Card>
             ) : null}
@@ -434,19 +356,14 @@ export function GoalPortal({ initialRole = "employee", profile }: GoalPortalProp
                   goals={goals}
                   users={users}
                   currentUser={currentUser}
-                  setGoals={useSupabase ? setGoals : persist}
+                  setGoals={setGoals}
                   reviews={reviews}
                   setReviews={setReviews}
                   notify={notify}
-                  useSupabase={useSupabase}
                   onPushSharedGoal={async (ownerIds) => {
                     try {
-                      if (useSupabase) {
-                        const sharedGoals = await pushSupabaseSharedGoal(ownerIds, currentUser.id);
-                        setGoals((currentGoals) => [...currentGoals, ...sharedGoals]);
-                      } else {
-                        persist([...goals, ...createSharedDemoGoals(ownerIds, currentUser.id)]);
-                      }
+                      const sharedGoals = await pushSharedGoal(ownerIds);
+                      setGoals((currentGoals) => [...currentGoals, ...sharedGoals]);
                       notify("Shared KPI pushed", "Departmental training goal was added to selected employees.");
                     } catch (error) {
                       notify("Push failed", error instanceof Error ? error.message : "Please try again.");
@@ -457,7 +374,7 @@ export function GoalPortal({ initialRole = "employee", profile }: GoalPortalProp
             ) : null}
             {role === "admin" ? (
               <div id="governance" className="scroll-mt-24">
-                <AdminDashboard goals={goals} users={users} reviews={reviews} setGoals={useSupabase ? setGoals : persist} notify={notify} useSupabase={useSupabase} />
+                <AdminDashboard goals={goals} users={users} reviews={reviews} setGoals={setGoals} notify={notify} />
               </div>
             ) : null}
             <div id="tracking" className="scroll-mt-24">
@@ -612,7 +529,7 @@ function EmployeeDashboard({
         <CardContent className="grid gap-4">
           <div>
             <div className="mb-2 flex justify-between text-sm">
-              <span className="text-muted-foreground">Total weightage</span>
+              <span className="text-muted-foreground">Active submission weightage</span>
               <span className={cn("font-medium", validation.totalWeightage === 100 ? "text-emerald-700" : "text-slate-700")}>
                 {validation.totalWeightage}%
               </span>
@@ -741,7 +658,6 @@ function ManagerDashboard({
   reviews,
   setReviews,
   notify,
-  useSupabase,
   onPushSharedGoal
 }: {
   goals: Goal[];
@@ -751,7 +667,6 @@ function ManagerDashboard({
   reviews: ManagerReview[];
   setReviews: (reviews: ManagerReview[]) => void;
   notify: (title: string, description: string) => void;
-  useSupabase: boolean;
   onPushSharedGoal: (ownerIds: string[]) => Promise<void>;
 }) {
   const submittedOwners = useMemo(() => {
@@ -765,10 +680,8 @@ function ManagerDashboard({
     const optimisticGoals = goals.map((goal) => (goal.id === goalId ? { ...goal, ...patch, updatedAt: new Date().toISOString() } : goal));
     setGoals(optimisticGoals);
 
-    if (!useSupabase) return;
-
     try {
-      const updatedGoal = await updateSupabaseGoalFields(goalId, patch);
+      const updatedGoal = await updateGoalFields(goalId, patch);
       setGoals(optimisticGoals.map((goal) => (goal.id === updatedGoal.id ? updatedGoal : goal)));
     } catch (error) {
       setGoals(previousGoals);
@@ -788,17 +701,10 @@ function ManagerDashboard({
       return;
     }
     try {
-      if (useSupabase) {
-        const result = await decideSupabaseGoals(ownerId, currentUser.id, status, comment.trim());
-        const decidedGoals = result.goals;
-        setGoals(goals.map((goal) => decidedGoals.find((decidedGoal) => decidedGoal.id === goal.id) ?? goal));
-        setReviews([...reviews, ...result.reviews]);
-      } else {
-        const result = decideEmployeeGoals(goals, reviews, ownerId, "u_manager", status, comment.trim());
-        setGoals(result.updatedGoals);
-        setReviews(result.updatedReviews);
-        saveReviews(result.updatedReviews);
-      }
+      const result = await decideGoals(ownerId, status, comment.trim());
+      const decidedGoals = result.goals;
+      setGoals(goals.map((goal) => decidedGoals.find((decidedGoal) => decidedGoal.id === goal.id) ?? goal));
+      setReviews([...reviews, ...result.reviews]);
       notify(status === "approved" ? "Goals approved" : "Goals rejected", "The employee plan has been updated.");
     } catch (error) {
       notify("Review failed", error instanceof Error ? error.message : "Please try again.");
@@ -952,24 +858,18 @@ function AdminDashboard({
   users,
   reviews,
   setGoals,
-  notify,
-  useSupabase
+  notify
 }: {
   goals: Goal[];
   users: User[];
   reviews: ManagerReview[];
   setGoals: (goals: Goal[]) => void;
   notify: (title: string, description: string) => void;
-  useSupabase: boolean;
 }) {
   async function unlock(goalId: string) {
     try {
-      if (useSupabase) {
-        const unlockedGoal = await unlockSupabaseGoal(goalId);
-        setGoals(goals.map((goal) => (goal.id === unlockedGoal.id ? unlockedGoal : goal)));
-      } else {
-        setGoals(goals.map((goal) => (goal.id === goalId ? { ...goal, locked: false, status: "draft", updatedAt: new Date().toISOString() } : goal)));
-      }
+      const unlockedGoal = await unlockGoal(goalId);
+      setGoals(goals.map((goal) => (goal.id === unlockedGoal.id ? unlockedGoal : goal)));
       notify("Goal unlocked", "The employee can edit and resubmit this goal.");
     } catch (error) {
       notify("Unlock failed", error instanceof Error ? error.message : "Please try again.");
